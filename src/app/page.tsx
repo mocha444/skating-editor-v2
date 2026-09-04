@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 
 type Status = "idle" | "uploading" | "processing" | "done" | "error";
-type Result = { segments: number; duration: number; finalUrl: string; rawSegments: [number, number][] | [number, number, number][]; segUrls?: string[] };
+type Result = { segments: number; duration: number; finalUrl: string; rawSegments: [number, number][] | [number, number, number][]; segUrls?: string[]; logs?: string[] };
 
 export default function Page() {
   const [file, setFile] = useState<File | null>(null);
@@ -10,7 +10,16 @@ export default function Page() {
   const [status, setStatus] = useState<Status>("idle");
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string>("");
+  const [logs, setLogs] = useState<string[]>([]);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (autoScroll && logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight;
+    }
+  }, [logs, autoScroll]);
 
   useEffect(() => {
     fetch("/api/latest").then(r => r.json()).then(j => {
@@ -29,8 +38,10 @@ export default function Page() {
     try {
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       if (!r.ok) { const j = await r.json(); throw new Error(j.error); }
+      const resultData = await r.json();
       setStatus("done");
-      setResult(await r.json());
+      setResult(resultData);
+      if (resultData.logs) setLogs(resultData.logs);
     } catch (e: any) {
       setStatus("error");
       setError(e.message);
@@ -93,8 +104,10 @@ export default function Page() {
               try {
                 const r = await fetch("/api/process-latest", { method: "POST" });
                 if (!r.ok) { const j = await r.json(); throw new Error(j.error); }
+                const j = await r.json();
                 setStatus("done");
-                setResult(await r.json());
+                setResult(j);
+                if (j.logs) setLogs(j.logs);
               } catch (e: any) {
                 setStatus("error");
                 setError(e.message);
@@ -123,6 +136,34 @@ export default function Page() {
       {status === "error" && (
         <div className="text-red-400 bg-red-950 border border-red-800 rounded-xl px-6 py-3">
           Error: {error}
+        </div>
+      )}
+
+      {/* Logs panel */}
+      {(status === "processing" || status === "done" || status === "error") && logs.length > 0 && (
+        <div className="w-full max-w-2xl flex flex-col gap-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-semibold text-neutral-400">Build logs ({logs.length})</h3>
+            <label className="flex items-center gap-2 text-sm text-neutral-400 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={autoScroll}
+                onChange={e => setAutoScroll(e.target.checked)}
+                className="w-4 h-4 accent-amber-400"
+              />
+              Auto-scroll
+            </label>
+          </div>
+          <div
+            ref={logRef}
+            className="bg-black border border-neutral-700 rounded-xl p-4 text-xs font-mono text-neutral-300 h-48 overflow-y-auto whitespace-pre-wrap"
+          >
+            {logs.map((line, i) => (
+              <div key={i} className="text-emerald-300">
+                {line}
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
