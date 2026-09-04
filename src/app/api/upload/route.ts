@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     segments: segments.length,
-    duration: segments.reduce((a, [s, e]) => a + (e - s), 0),
+    duration: segments.reduce((a: number, [s, e]: [number, number]) => a + (e - s), 0),
     finalUrl: `/results/skating_final_${id}.mp4`,
     rawSegments: segments,
     segUrls,

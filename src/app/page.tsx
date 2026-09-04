@@ -145,9 +145,10 @@ export default function Page() {
               <p className="text-sm font-semibold text-neutral-400">Segments extracted:</p>
               {result?.rawSegments?.map((seg, i) => {
                 const [s, e] = seg;
+                const segUrl = result.segUrls?.[i] || result.finalUrl;
                 return (
                   <div key={i} className="flex justify-between text-sm text-neutral-300 bg-neutral-800 rounded px-3 py-1">
-                    <span>Clip {i + 1}</span>
+                    <span>Clip {i + 1} — {fmt(s)} → {fmt(e)}</span>
                     <a href={segUrl} className="bg-amber-400 text-neutral-950 text-xs font-bold px-3 py-1 rounded hover:bg-amber-300 transition-colors" target="_blank" rel="noopener noreferrer">Play →</a>
                   </div>
                 );

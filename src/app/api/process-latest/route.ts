@@ -73,7 +73,7 @@ export async function POST() {
 
   // Per-segment URLs for UI play buttons
   const segDirUrl = `/uploads/${latestDir}/segments`;
-  const segUrls = segments.map((_, i) => `${segDirUrl}/seg-${i}.mp4`);
+  const segUrls = (segments as [number, number][]).map((_, i) => `${segDirUrl}/seg-${i}.mp4`);
 
   return NextResponse.json({
     ok: true,
