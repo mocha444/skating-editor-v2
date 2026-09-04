@@ -48,3 +48,5 @@ results/**/*.mp4
 segments/
 *.mp4
 progress/
+public/uploads/skate-process-*/
+public/uploads/progress/
