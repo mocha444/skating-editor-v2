@@ -12,20 +12,42 @@ export default function Page() {
   const [error, setError] = useState<string>("");
   const [logs, setLogs] = useState<string[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
+  const [streamConnected, setStreamConnected] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (autoScroll && logRef.current && logs.length > 0) {
-      logRef.current.scrollTop = logRef.current.scrollHeight;
+    if (status === "processing" || status === "uploading") {
+      setLogs(prev => [...prev, "Connecting to build stream..."]);
+      const es = new EventSource("/api/process-stream");
+      es.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data);
+          if (data.type === "log" && data.line) {
+            setLogs(prev => [...prev, data.line]);
+          } else if (data.type === "done" && data.segment) {
+            setLogs(prev => [...prev, "✓ Final video assembled"]);
+          } else if (data.type === "error") {
+            setLogs(prev => [...prev, "✗ Error: " + data.error]);
+          }
+        } catch {}
+      };
+      es.onerror = () => { setLogs(p => [...p, "Stream disconnected, waiting for server..."]); };
+      setStreamConnected(true);
+      return () => { es.close(); setStreamConnected(false); };
     }
-  }, [logs, autoScroll]);
+  }, [status]);
 
   useEffect(() => {
     fetch("/api/latest").then(r => r.json()).then(j => {
       if (j.file) setLatestName(j.dir);
     });
   }, []);
+
+  // Auto-scroll log panel
+  useEffect(() => {
+    if (autoScroll && logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [logs, autoScroll]);
 
   function fmt(s?: number) { return `${(s ?? 0).toFixed(1)}s`; }
 
