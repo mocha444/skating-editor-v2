@@ -86,12 +86,19 @@ export async function GET() {
 
         const withMtime = await Promise.all(
           entries.map(async d => {
-            const s = await stat(path.join(UPLOADS_DIR, d.name, "input.mp4"));
-            return { name: d.name, mtime: s.mtimeMs };
+            const filePath = path.join(UPLOADS_DIR, d.name, "input.mp4");
+            try {
+              const s = await stat(filePath);
+              return { name: d.name, mtime: s.mtimeMs };
+            } catch {
+              return null;
+            }
           })
         );
-        withMtime.sort((a, b) => b.mtime - a.mtime);
-        const latestDir = withMtime[0].name;
+        const valid = withMtime.filter((x): x is { name: string; mtime: number } => x !== null) as { name: string; mtime: number }[];
+        if (!valid.length) { sendError("no valid uploads found"); return; }
+        valid.sort((a, b) => b.mtime - a.mtime);
+        const latestDir = valid[0].name;
         const inPath = path.join(UPLOADS_DIR, latestDir, "input.mp4");
         const segDir = path.join(UPLOADS_DIR, latestDir, "segments");
         await mkdir(segDir, { recursive: true });

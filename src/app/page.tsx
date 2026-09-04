@@ -131,22 +131,41 @@ export default function Page() {
           <button
             onClick={async () => {
               setStatus("processing");
-              setLogs([`Finding latest upload: ${latestName}...`, "Starting motion detection..."]);
+              setLogs([`Finding latest upload: ${latestName}...`, "Starting motion detection...", "(This may take 1-3 minutes. Watch logs below for live updates.)"]);
               try {
-                const r = await fetch("/api/process-latest", { method: "POST" });
-                if (!r.ok) { const j = await r.json(); throw new Error(j.error); }
-                const j = await r.json();
-                setStatus("done");
-                setResult(j);
-                if (j.logs) setLogs(j.logs);
+                const es = new EventSource("/api/process-stream");
+                es.onmessage = (e) => {
+                  try {
+                    const msg = JSON.parse(e.data);
+                    if (msg.type === "log" && msg.line) {
+                      setLogs(prev => [...prev, msg.line]);
+                    } else if (msg.type === "done" && msg.ok) {
+                      setStatus("done");
+                      setResult(msg);
+                      setLogs(prev => [...prev, "✓ Final video assembled!"]);
+                      es.close();
+                    } else if (msg.type === "error") {
+                      setStatus("error");
+                      setLogs(prev => [...prev, "✗ Error: " + (msg.error || "Unknown")]);
+                      es.close();
+                    }
+                  } catch {}
+                };
+                es.onerror = () => {
+                  setStatus("processing"); // Keep processing since server might be working
+                  setLogs(prev => [...prev, "✗ Stream disconnected — server still working..."]);
+                };
+                // Safety timeout after 10 min
+                setTimeout(() => es.close(), 600000);
               } catch (e: any) {
                 setStatus("error");
-                setError(e.message);
+                setError(e.message || "Failed to connect to stream");
+                setLogs(prev => [...prev, "✗ Stream connection failed"]);
               }
             }}
             className="bg-amber-400 text-neutral-950 font-bold px-6 py-2 rounded-lg hover:bg-amber-300 transition-colors text-sm"
           >
-            Process Latest Upload
+            Process Latest Upload (Live Stream)
           </button>
         </div>
       )}
