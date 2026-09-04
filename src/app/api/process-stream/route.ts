@@ -78,11 +78,11 @@ export async function GET() {
         await mkdir(PROGRESS_DIR, { recursive: true });
 
         // Find latest input
-        send("Finding latest upload...");
+        send("Finding latest file on disk...");
         const entries = (await readdir(UPLOADS_DIR, { withFileTypes: true }))
           .filter(d => d.isDirectory() && d.name.startsWith("skate-") && !d.name.startsWith("skate-process"));
 
-        if (!entries.length) { sendError("no uploads"); return; }
+        if (!entries.length) { sendError("no files on disk"); return; }
 
         const withMtime = await Promise.all(
           entries.map(async d => {
@@ -96,7 +96,7 @@ export async function GET() {
           })
         );
         const valid = withMtime.filter((x): x is { name: string; mtime: number } => x !== null) as { name: string; mtime: number }[];
-        if (!valid.length) { sendError("no valid uploads found"); return; }
+        if (!valid.length) { sendError("no valid files on disk"); return; }
         valid.sort((a, b) => b.mtime - a.mtime);
         const latestDir = valid[0].name;
         const inPath = path.join(UPLOADS_DIR, latestDir, "input.mp4");
@@ -104,7 +104,7 @@ export async function GET() {
         await mkdir(segDir, { recursive: true });
 
         const fileSize = (await stat(inPath)).size;
-        send(`Loaded ${latestDir} (${(fileSize/1e6).toFixed(1)} MB)`);
+        send(`Found on disk: ${latestDir} (${(fileSize/1e6).toFixed(1)} MB — reusing existing)`);
 
         const id = randomUUID().slice(0, 8);
         const outDir = path.join(UPLOADS_DIR, `skate-process-${id}`);

@@ -15,34 +15,34 @@ export default function Page() {
   const [streamConnected, setStreamConnected] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const esRef = useRef<EventSource | null>(null);
 
+  // Stream logs from SSE — only for "processing" (button-triggered), not "uploading"
   useEffect(() => {
-    if (status === "processing" || status === "uploading") {
-      setLogs(prev => [...prev, "Connecting to build stream..."]);
-      const es = new EventSource("/api/process-stream");
-      es.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data);
-          if (data.type === "log" && data.line) {
-            setLogs(prev => [...prev, data.line]);
-          } else if (data.type === "done" && data.segment) {
-            setLogs(prev => [...prev, "✓ Final video assembled"]);
-          } else if (data.type === "error") {
-            setLogs(prev => [...prev, "✗ Error: " + data.error]);
-          }
-        } catch {}
-      };
-      es.onerror = () => { setLogs(p => [...p, "Stream disconnected, waiting for server..."]); };
-      setStreamConnected(true);
-      return () => { es.close(); setStreamConnected(false); };
-    }
+    if (status !== "processing") return;
+    if (esRef.current) return; // Already connected
+    const es = new EventSource("/api/process-stream");
+    esRef.current = es;
+    es.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data);
+        if (data.type === "log" && data.line) setLogs(prev => [...prev, data.line]);
+        else if (data.type === "done" && data.ok) {
+          setLogs(prev => [...prev, "✓ Final video assembled!"]);
+          es.close();
+          esRef.current = null;
+        } else if (data.type === "error") {
+          setLogs(prev => [...prev, "✗ Error: " + (data.error || "unknown")]);
+          es.close();
+          esRef.current = null;
+        }
+      } catch {}
+    };
+    es.onerror = () => {
+      setLogs(p => [...p, "Stream disconnected... server may still be working."]);
+    };
+    return () => { es.close(); esRef.current = null; };
   }, [status]);
-
-  useEffect(() => {
-    fetch("/api/latest").then(r => r.json()).then(j => {
-      if (j.file) setLatestName(j.dir);
-    });
-  }, []);
 
   // Auto-scroll log panel
   useEffect(() => {
@@ -53,25 +53,18 @@ export default function Page() {
 
   async function submit() {
     if (!file) return;
-    setStatus("uploading");
-    setLogs([`Uploading ${file.name} (${(file.size/1e6).toFixed(1)} MB)...`, "(upload + MOG2 + ffmpeg will take 1-3 min — log will populate when server responds)"]);
-    setError("");
-    const fd = new FormData();
-    fd.append("video", file);
     setStatus("processing");
+    setLogs([`Uploading ${file.name}...`]);
+    setError("");
     try {
+      const fd = new FormData();
+      fd.append("video", file);
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       if (!r.ok) { const j = await r.json(); throw new Error(j.error); }
-      const resultData = await r.json();
-      if (resultData.duplicate) {
-        setStatus("done");
-        setLogs([`Already uploaded! Found existing: ${resultData.existingDir || "previous"}`]);
-        // Optionally load existing result
-      } else {
-        setStatus("done");
-        setResult(resultData);
-        if (resultData.logs) setLogs(resultData.logs);
-      }
+      const j = await r.json();
+      setStatus("done");
+      setResult(j);
+      if (j.logs) setLogs(j.logs);
     } catch (e: any) {
       setStatus("error");
       setError(e.message);
@@ -93,11 +86,28 @@ export default function Page() {
             type="file"
             accept="video/mp4"
             className="hidden"
-            onChange={e => {
+            onChange={async (e) => {
               const f = e.target.files?.[0];
-              setFile(f || null);
+              if (!f) return;
+              setFile(f);
               setStatus("idle");
               setResult(null);
+              // Check duplicate immediately when dropped/selected
+              setLogs([`Checking MD5...`]);
+              try {
+                const buf = await f.arrayBuffer();
+                const digest = await crypto.subtle.digest("MD5", buf);
+                const arr = new Uint8Array(digest);
+                const md5 = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
+                const check = await fetch("/api/check-duplicate?hash=" + md5);
+                if (check.ok) {
+                  const j = await check.json();
+                  if (j.duplicate) {
+                    setStatus("done");
+                    setLogs([`✓ Already uploaded! Found existing: ${j.dir}`]);
+                  }
+                }
+              } catch {}
             }}
           />
           {file ? (

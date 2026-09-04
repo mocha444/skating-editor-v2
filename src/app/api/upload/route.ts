@@ -24,28 +24,29 @@ async function run(cmd: string, args: string[]): Promise<string> {
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const file = formData.get("video") as File | null;
+  const clientHash = formData.get("hash") as string | null;
   if (!file) return NextResponse.json({ error: "no file" }, { status: 400 });
-  console.log("[upload] received:", file.name, "| type:", file.type, "| size:", file.size);
+  console.log("[upload] received:", file.name, "| size:", file.size, "| hash:", clientHash);
 
-  // Duplicate check — compute MD5 of file and compare to existing uploads
-  const fileBuffer = Buffer.from(await file.arrayBuffer());
-  const md5 = createHash("md5").update(fileBuffer).digest("hex");
+  // Fast duplicate check using client-provided hash + stored hash files
   const uploadsDir = await readdir(UPLOADS_DIR, { withFileTypes: true });
   for (const entry of uploadsDir) {
-    if (entry.isDirectory() && entry.name.startsWith("skate-")) {
-      try {
-        const existingPath = path.join(UPLOADS_DIR, entry.name, "input.mp4");
-        const existingBuffer = await readFile(existingPath);
-        const existingMd5 = createHash("md5").update(existingBuffer).digest("hex");
-        if (existingMd5 === md5) {
-          console.log(`[upload] duplicate detected: ${file.name} matches ${entry.name}`);
-          return NextResponse.json({ ok: false, duplicate: true, existingDir: entry.name, message: "Same video already uploaded" });
-        }
-      } catch {}
-    }
+    if (!entry.isDirectory() || !entry.name.startsWith("skate-")) continue;
+    try {
+      const hashPath = path.join(UPLOADS_DIR, entry.name, "hash.md5");
+      const storedHash = (await readFile(hashPath, "utf8")).trim();
+      if (storedHash === clientHash) {
+        console.log(`[upload] duplicate: ${file.name} matches ${entry.name}`);
+        return NextResponse.json({ ok: false, duplicate: true, existingDir: entry.name, message: "Same video already uploaded" });
+      }
+    } catch {}
   }
 
+  // Save hash first so future dup checks are instant
   const id = randomUUID().slice(0, 8);
+  const dir = path.join(UPLOADS_DIR, `skate-${id}`);
+  await mkdir(dir, { recursive: true });
+  if (clientHash) await writeFile(path.join(dir, "hash.md5"), clientHash, "utf8");
 
   // persistent project directories
   await mkdir(UPLOADS_DIR, { recursive: true });
