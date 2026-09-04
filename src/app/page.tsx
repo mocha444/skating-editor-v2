@@ -32,11 +32,10 @@ export default function Page() {
   async function submit() {
     if (!file) return;
     setStatus("uploading");
-    setLogs([`Uploading ${file.name} (${(file.size/1e6).toFixed(1)} MB)...`]);
+    setLogs([`Uploading ${file.name} (${(file.size/1e6).toFixed(1)} MB)...`, "(upload + MOG2 + ffmpeg will take 1-3 min — log will populate when server responds)"]);
     setError("");
     const fd = new FormData();
     fd.append("video", file);
-    setLogs(prev => [...prev, "Upload complete, running MOG2 motion detection..."]);
     setStatus("processing");
     try {
       const r = await fetch("/api/upload", { method: "POST", body: fd });
@@ -44,7 +43,7 @@ export default function Page() {
       const resultData = await r.json();
       setStatus("done");
       setResult(resultData);
-      if (resultData.logs) setLogs(prev => [...prev, ...(resultData.logs || [])]);
+      if (resultData.logs) setLogs(resultData.logs);
     } catch (e: any) {
       setStatus("error");
       setError(e.message);
