@@ -69,11 +69,16 @@ export async function POST(req: NextRequest) {
   // Re-encode audio (aac) to fix A/V drift at concat boundaries; copy video to preserve quality
   await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", finalPath]);
 
+  // Build per-segment URLs so the UI can play each clip individually
+  const workDirName = path.basename(workDir);
+  const segUrls = segFiles.map((f, i) => `/uploads/${workDirName}/segments/seg-${i}.mp4`);
+
   return NextResponse.json({
     ok: true,
     segments: segments.length,
     duration: segments.reduce((a, [s, e]) => a + (e - s), 0),
     finalUrl: `/results/skating_final_${id}.mp4`,
     rawSegments: segments,
+    segUrls,
   });
 }

@@ -71,11 +71,16 @@ export async function POST() {
   const finalPath = path.join(RESULTS_DIR, `skating_final_${id}.mp4`);
   await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", finalPath]);
 
+  // Per-segment URLs for UI play buttons
+  const segDirUrl = `/uploads/${latestDir}/segments`;
+  const segUrls = segments.map((_, i) => `${segDirUrl}/seg-${i}.mp4`);
+
   return NextResponse.json({
     ok: true,
     segments: segments.length,
     duration: segments.reduce((a: number, [s, e]: number[]) => a + (e - s), 0),
     finalUrl: `/results/skating_final_${id}.mp4`,
     rawSegments: segments,
+    segUrls,
   });
 }

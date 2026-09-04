@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 
 type Status = "idle" | "uploading" | "processing" | "done" | "error";
-type Result = { segments: number; duration: number; finalUrl: string; rawSegments: [number, number][] | [number, number, number][] };
+type Result = { segments: number; duration: number; finalUrl: string; rawSegments: [number, number][] | [number, number, number][]; segUrls?: string[] };
 
 export default function Page() {
   const [file, setFile] = useState<File | null>(null);
@@ -135,9 +135,10 @@ export default function Page() {
             {/* Final video */}
             <video
               controls
-              className="w-full rounded-xl"
+              className="w-full rounded-xl mb-2"
               src={result.finalUrl}
             />
+            <a href={result.finalUrl} target="_blank" rel="noopener noreferrer" className="block text-center text-sm text-amber-400 hover:text-amber-300 underline">Open full assembled video →</a>
 
             {/* Segment breakdown */}
             <div className="mt-4 space-y-2">
@@ -147,7 +148,7 @@ export default function Page() {
                 return (
                   <div key={i} className="flex justify-between text-sm text-neutral-300 bg-neutral-800 rounded px-3 py-1">
                     <span>Clip {i + 1}</span>
-                    <span>{fmt(s)} → {fmt(e)} ({fmt(e - s)})</span>
+                    <a href={segUrl} className="bg-amber-400 text-neutral-950 text-xs font-bold px-3 py-1 rounded hover:bg-amber-300 transition-colors" target="_blank" rel="noopener noreferrer">Play →</a>
                   </div>
                 );
               })}
