@@ -16,7 +16,7 @@ export default function Page() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (autoScroll && logRef.current) {
+    if (autoScroll && logRef.current && logs.length > 0) {
       logRef.current.scrollTop = logRef.current.scrollHeight;
     }
   }, [logs, autoScroll]);
@@ -139,30 +139,35 @@ export default function Page() {
         </div>
       )}
 
-      {/* Logs panel */}
-      {(status === "processing" || status === "done" || status === "error") && logs.length > 0 && (
+      {/* Build logs — appears when processing/done + shows all server output */}
+      {(status === "processing" || status === "done" || status === "error") && (
         <div className="w-full max-w-2xl flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-neutral-400">Build logs ({logs.length})</h3>
-            <label className="flex items-center gap-2 text-sm text-neutral-400 cursor-pointer">
+            <h3 className="text-sm font-semibold text-neutral-400 flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
+              Build logs {logs.length > 0 ? `(${logs.length} lines)` : "(waiting...)"}
+            </h3>
+            <label className="flex items-center gap-2 text-sm text-neutral-400 cursor-pointer select-none">
               <input
                 type="checkbox"
                 checked={autoScroll}
                 onChange={e => setAutoScroll(e.target.checked)}
-                className="w-4 h-4 accent-amber-400"
+                className="w-4 h-4 accent-amber-400 rounded"
               />
               Auto-scroll
             </label>
           </div>
           <div
             ref={logRef}
-            className="bg-black border border-neutral-700 rounded-xl p-4 text-xs font-mono text-neutral-300 h-48 overflow-y-auto whitespace-pre-wrap"
+            className="bg-black border border-neutral-700 rounded-xl p-4 text-xs font-mono text-neutral-300 h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed shadow-inner"
           >
-            {logs.map((line, i) => (
-              <div key={i} className="text-emerald-300">
-                {line}
+            {logs.length > 0 ? logs.map((line, i) => (
+              <div key={i} className="py-0.5 border-b border-neutral-800/50 last:border-0">
+                <span className="text-amber-400 select-none">[log]</span> {line}
               </div>
-            ))}
+            )) : (
+              <div className="text-neutral-500 italic">Waiting for build output from MOG2 + ffmpeg...</div>
+            )}
           </div>
         </div>
       )}
