@@ -32,16 +32,19 @@ export default function Page() {
   async function submit() {
     if (!file) return;
     setStatus("uploading");
+    setLogs([`Uploading ${file.name} (${(file.size/1e6).toFixed(1)} MB)...`]);
     setError("");
     const fd = new FormData();
     fd.append("video", file);
+    setLogs(prev => [...prev, "Upload complete, running MOG2 motion detection..."]);
+    setStatus("processing");
     try {
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       if (!r.ok) { const j = await r.json(); throw new Error(j.error); }
       const resultData = await r.json();
       setStatus("done");
       setResult(resultData);
-      if (resultData.logs) setLogs(resultData.logs);
+      if (resultData.logs) setLogs(prev => [...prev, ...(resultData.logs || [])]);
     } catch (e: any) {
       setStatus("error");
       setError(e.message);
@@ -100,7 +103,8 @@ export default function Page() {
           <p className="text-sm text-neutral-300">Latest upload: <b>{latestName}</b></p>
           <button
             onClick={async () => {
-              setStatus("uploading");
+              setStatus("processing");
+              setLogs([`Finding latest upload: ${latestName}...`, "Starting motion detection..."]);
               try {
                 const r = await fetch("/api/process-latest", { method: "POST" });
                 if (!r.ok) { const j = await r.json(); throw new Error(j.error); }
@@ -139,8 +143,8 @@ export default function Page() {
         </div>
       )}
 
-      {/* Build logs — appears when processing/done + shows all server output */}
-      {(status === "processing" || status === "done" || status === "error") && (
+      {/* Build logs — appears during processing / done / error + upload */}
+      {(status === "uploading" || status === "processing" || status === "done" || status === "error") && (
         <div className="w-full max-w-2xl flex flex-col gap-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-neutral-400 flex items-center gap-2">
