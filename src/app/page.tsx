@@ -41,9 +41,15 @@ export default function Page() {
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       if (!r.ok) { const j = await r.json(); throw new Error(j.error); }
       const resultData = await r.json();
-      setStatus("done");
-      setResult(resultData);
-      if (resultData.logs) setLogs(resultData.logs);
+      if (resultData.duplicate) {
+        setStatus("done");
+        setLogs([`Already uploaded! Found existing: ${resultData.existingDir || "previous"}`]);
+        // Optionally load existing result
+      } else {
+        setStatus("done");
+        setResult(resultData);
+        if (resultData.logs) setLogs(resultData.logs);
+      }
     } catch (e: any) {
       setStatus("error");
       setError(e.message);

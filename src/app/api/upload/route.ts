@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
-import { writeFile, mkdir, readFile } from "fs/promises";
+import { writeFile, mkdir, readFile, readdir } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
+import { createHash } from "crypto";
 
 export const runtime = "nodejs";
 
@@ -25,6 +26,24 @@ export async function POST(req: NextRequest) {
   const file = formData.get("video") as File | null;
   if (!file) return NextResponse.json({ error: "no file" }, { status: 400 });
   console.log("[upload] received:", file.name, "| type:", file.type, "| size:", file.size);
+
+  // Duplicate check — compute MD5 of file and compare to existing uploads
+  const fileBuffer = Buffer.from(await file.arrayBuffer());
+  const md5 = createHash("md5").update(fileBuffer).digest("hex");
+  const uploadsDir = await readdir(UPLOADS_DIR, { withFileTypes: true });
+  for (const entry of uploadsDir) {
+    if (entry.isDirectory() && entry.name.startsWith("skate-")) {
+      try {
+        const existingPath = path.join(UPLOADS_DIR, entry.name, "input.mp4");
+        const existingBuffer = await readFile(existingPath);
+        const existingMd5 = createHash("md5").update(existingBuffer).digest("hex");
+        if (existingMd5 === md5) {
+          console.log(`[upload] duplicate detected: ${file.name} matches ${entry.name}`);
+          return NextResponse.json({ ok: false, duplicate: true, existingDir: entry.name, message: "Same video already uploaded" });
+        }
+      } catch {}
+    }
+  }
 
   const id = randomUUID().slice(0, 8);
 
