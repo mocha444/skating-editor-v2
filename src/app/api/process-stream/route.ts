@@ -43,7 +43,7 @@ async function runFfmpeg(args: string[], send: (line: string) => void): Promise<
       const text = d.toString();
       err += text;
       // Just show key ffmpeg lines
-      text.split("\n").filter(l => l.trim()).forEach(line => {
+      text.split("\n").filter((l: string) => l.trim()).forEach((line: string) => {
         if (line.includes("frame=") || line.includes("time=") || line.includes("size=") || line.includes("error") || line.includes("Output")) {
           send(line.trim());
         }
