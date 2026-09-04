@@ -69,7 +69,7 @@ export async function POST() {
   const listPath = path.join(outDir, "list.txt");
   await writeFile(listPath, segFiles.map(f => `file '${f}'`).join("\n"));
   const finalPath = path.join(RESULTS_DIR, `skating_final_${id}.mp4`);
-  await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", finalPath]);
+  await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", finalPath]);
 
   return NextResponse.json({
     ok: true,

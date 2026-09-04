@@ -66,7 +66,8 @@ export async function POST(req: NextRequest) {
   const listPath = path.join(workDir, "list.txt");
   await writeFile(listPath, segFiles.map(f => `file '${f}'`).join("\n"));
   const finalPath = path.join(RESULTS_DIR, `skating_final_${id}.mp4`);
-  await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", finalPath]);
+  // Re-encode audio (aac) to fix A/V drift at concat boundaries; copy video to preserve quality
+  await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", finalPath]);
 
   return NextResponse.json({
     ok: true,
