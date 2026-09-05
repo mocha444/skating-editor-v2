@@ -51,3 +51,6 @@ progress/
 public/uploads/skate-process-*/
 public/uploads/progress/
 nohup.out
+
+# playwright cli session data
+.playwright-cli/
