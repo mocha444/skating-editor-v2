@@ -12,6 +12,8 @@ export default function Page() {
   const [logs, setLogs] = useState<string[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
   const [isDuplicate, setIsDuplicate] = useState<boolean | null>(null); // null = unknown
+  const [downloaded, setDownloaded] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
   // Detection parameters
   const [threshold, setThreshold] = useState(0.003);
   const [minContour, setMinContour] = useState(50);
@@ -27,6 +29,18 @@ export default function Page() {
 }[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const busy = status === "uploading" || status === "processing";
+
+  function resetState() {
+    setFile(null);
+    setStatus("idle");
+    setResult(null);
+    setIsDuplicate(null);
+    setDownloaded(false);
+    setConfirmReset(false);
+    if (inputRef.current) inputRef.current.value = "";
+  }
 
   useEffect(() => {
     fetch("/api/recent").then(r => r.json()).then(data => setRecent(data)).catch(() => {});
@@ -124,8 +138,10 @@ export default function Page() {
   }
 
   async function submit() {
-    if (!file) return;
+    if (!file || busy) return;
     setStatus("uploading");
+    setDownloaded(false);
+    setConfirmReset(false);
     setLogs([`Uploading ${file.name}...`]);
     setError("");
     try {
@@ -211,11 +227,13 @@ export default function Page() {
                   <span className="text-xs text-neutral-500">{r.date} · {r.durationLabel || "—"}</span>
                   <button
                     onClick={() => processRecent(r.dir)}
-                    className="mt-1 text-xs bg-amber-400 text-neutral-950 font-bold px-3 py-1 rounded hover:bg-amber-300 transition-colors w-fit"
+                    disabled={busy}
+                    className="mt-1 text-xs bg-amber-400 text-neutral-950 font-bold px-3 py-1 rounded hover:bg-amber-300 transition-colors w-fit disabled:opacity-50 disabled:cursor-not-allowed"
                   >Re-process video</button>
                   <button
                     onClick={() => deleteRecent(r.dir)}
-                    className="mt-1 text-xs bg-red-900 text-red-300 border border-red-700 px-3 py-1 rounded hover:bg-red-800 transition-colors w-fit"
+                    disabled={busy}
+                    className="mt-1 text-xs bg-red-900 text-red-300 border border-red-700 px-3 py-1 rounded hover:bg-red-800 transition-colors w-fit disabled:opacity-50 disabled:cursor-not-allowed"
                   >Delete</button>
                 </div>
               </div>
@@ -242,6 +260,8 @@ export default function Page() {
               setStatus("idle");
               setResult(null);
               setIsDuplicate(null);
+              setDownloaded(false);
+              setConfirmReset(false);
               setLogs([`File selected: ${f.name} (${(f.size/1e6).toFixed(1)} MB)`]);
               // Compute hash and check for duplicates server-side
               (async () => {
@@ -379,7 +399,7 @@ export default function Page() {
               src={result.finalUrl}
             />
             <a href={result.finalUrl} target="_blank" rel="noopener noreferrer" className="block text-center text-sm text-amber-400 hover:text-amber-300 underline">Open full assembled video →</a>
-            <a href={`/api/download/${result.jobId}`} className="block text-center text-sm bg-amber-400 text-neutral-950 font-bold px-4 py-1 rounded hover:bg-amber-300 transition-colors w-fit mx-auto mt-2">Download video</a>
+            <a href={`/api/download/${result.jobId}`} onClick={() => { setDownloaded(true); setConfirmReset(false); }} className="block text-center text-sm bg-amber-400 text-neutral-950 font-bold px-4 py-1 rounded hover:bg-amber-300 transition-colors w-fit mx-auto mt-2">Download video</a>
 
             {/* Segment breakdown */}
             <div className="mt-4 space-y-2">
@@ -397,8 +417,25 @@ export default function Page() {
             </div>
           </div>
 
+          {confirmReset && (
+            <div className="max-w-lg w-full bg-amber-950/50 border border-amber-700 rounded-xl px-5 py-4 text-center">
+              <p className="text-amber-200 text-sm font-bold mb-1">Download your finished video first</p>
+              <p className="text-amber-100/80 text-xs mb-4">You haven't downloaded the completed video yet. Starting a new processing job will <span className="text-amber-300 font-bold">permanently delete</span> it. We recommend downloading it first.</p>
+              <div className="flex flex-col gap-3 items-center">
+                <a href={`/api/download/${result.jobId}`} onClick={() => { setDownloaded(true); setConfirmReset(false); }} className="text-sm bg-amber-400 text-neutral-950 font-bold px-4 py-2 rounded hover:bg-amber-300 transition-colors w-fit">Download video</a>
+                <div className="flex gap-3">
+                  <button onClick={() => { setConfirmReset(false); resetState(); }} className="text-xs text-amber-300 underline hover:text-amber-200">Continue anyway, delete it</button>
+                  <button onClick={() => setConfirmReset(false)} className="text-xs text-neutral-400 underline hover:text-white">Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <button
-            onClick={() => { setFile(null); setStatus("idle"); setResult(null); setIsDuplicate(null); if (inputRef.current) inputRef.current.value = ""; }}
+            onClick={() => {
+              if (result && !downloaded) { setConfirmReset(true); return; }
+              resetState();
+            }}
             className="bg-neutral-800 hover:bg-neutral-700 text-white font-semibold px-6 py-2 rounded-xl transition-colors self-center"
           >
             Process another

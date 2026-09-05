@@ -4,7 +4,7 @@ import { mkdir, writeFile, readFile, readdir, rm } from "fs/promises";
 import { createReadStream, writeFileSync, appendFileSync, readFileSync } from "fs";
 import path from "path";
 import { createHash } from "crypto";
-import { videoQueue } from "@/lib/bullmq-queue";
+import { videoQueue, countActiveJobs, tryLockSingleFlight, releaseSingleFlight } from "@/lib/bullmq-queue";
 import { db } from "@/lib/db";
 import { UPLOADS_DIR, RESULTS_DIR, PROGRESS_DIR, newJobId } from "@/lib/storage";
 
@@ -42,39 +42,48 @@ function appendLog(id: string, line: string) {
 }
 
 export async function POST(req: NextRequest) {
-  const formData = await req.formData();
-  const file = formData.get("video") as File | null;
-  const clientHash = formData.get("hash") as string | null;
-  const threshold = formData.get("threshold") as string | null;
-  const minContour = formData.get("min-contour") as string | null;
-  const minMotionFrames = formData.get("min-motion-frames") as string | null;
-  const bufferFrames = formData.get("buffer-frames") as string | null;
-  const historyStr = formData.get("history") as string | null;
-  const varThreshold = formData.get("var-threshold") as string | null;
-  const detectShadows = formData.get("detect-shadows") as string | null;
-
-  if (!file) return NextResponse.json({ error: "no file" }, { status: 400 });
-  console.log(`[upload] received: ${file.name} | size: ${fmtBytes(file.size)} | hash: ${clientHash}`);
-
-  // Fast duplicate check
-  await mkdir(UPLOADS_DIR, { recursive: true });
-  const uploadsDir = await readdir(UPLOADS_DIR, { withFileTypes: true });
-  if (clientHash) {
-    for (const entry of uploadsDir) {
-      if (!entry.isDirectory() || !entry.name.startsWith("skate-")) continue;
-      try {
-        const hashPath = path.join(UPLOADS_DIR, entry.name, "hash.md5");
-        const storedHash = (await readFile(hashPath, "utf8")).trim();
-        if (storedHash === clientHash) {
-          console.log(`[upload] duplicate: ${file.name} matches ${entry.name}`);
-          return NextResponse.json({ ok: false, duplicate: true, existingDir: entry.name });
-        }
-      } catch { /* no hash yet */ }
-    }
+  if (!(await tryLockSingleFlight())) {
+    return NextResponse.json({ ok: false, error: "Another video is already being uploaded or processed. Please wait for it to finish." }, { status: 409 });
   }
+  try {
+    const formData = await req.formData();
+    const file = formData.get("video") as File | null;
+    const clientHash = formData.get("hash") as string | null;
+    const threshold = formData.get("threshold") as string | null;
+    const minContour = formData.get("min-contour") as string | null;
+    const minMotionFrames = formData.get("min-motion-frames") as string | null;
+    const bufferFrames = formData.get("buffer-frames") as string | null;
+    const historyStr = formData.get("history") as string | null;
+    const varThreshold = formData.get("var-threshold") as string | null;
+    const detectShadows = formData.get("detect-shadows") as string | null;
+
+    if (!file) return NextResponse.json({ error: "no file" }, { status: 400 });
+    console.log(`[upload] received: ${file.name} | size: ${fmtBytes(file.size)} | hash: ${clientHash}`);
+
+    // Only one video may be processed at a time
+    if ((await countActiveJobs()) > 0) {
+      return NextResponse.json({ ok: false, error: "Another video is already being processed. Please wait for it to finish." }, { status: 409 });
+    }
+
+    // Fast duplicate check
+    await mkdir(UPLOADS_DIR, { recursive: true });
+    const uploadsDir = await readdir(UPLOADS_DIR, { withFileTypes: true });
+    if (clientHash) {
+      for (const entry of uploadsDir) {
+        if (!entry.isDirectory() || !entry.name.startsWith("skate-")) continue;
+        try {
+          const hashPath = path.join(UPLOADS_DIR, entry.name, "hash.md5");
+          const storedHash = (await readFile(hashPath, "utf8")).trim();
+          if (storedHash === clientHash) {
+            console.log(`[upload] duplicate: ${file.name} matches ${entry.name}`);
+            return NextResponse.json({ ok: false, duplicate: true, existingDir: entry.name });
+          }
+        } catch { /* no hash yet */ }
+      }
+    }
 
   const id = newJobId();
-  const dir = path.join(UPLOADS_DIR, `skate-${id}`);
+    const dir = path.join(UPLOADS_DIR, `skate-${id}`);
 
   // Single-active-job model: clear all previous files before saving the new upload
   await rm(UPLOADS_DIR, { recursive: true, force: true });
@@ -148,4 +157,7 @@ export async function POST(req: NextRequest) {
   }
 
   return NextResponse.json({ ok: true, jobId: id, dir: `skate-${id}` });
+  } finally {
+    await releaseSingleFlight();
+  }
 }
