@@ -6,43 +6,14 @@ type Result = { segments: number; duration: number; finalUrl: string; rawSegment
 
 export default function Page() {
   const [file, setFile] = useState<File | null>(null);
-  const [latestName, setLatestName] = useState<string>("");
   const [status, setStatus] = useState<Status>("idle");
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string>("");
   const [logs, setLogs] = useState<string[]>([]);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [streamConnected, setStreamConnected] = useState(false);
+  const [isDuplicate, setIsDuplicate] = useState<boolean | null>(null); // null = unknown
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const esRef = useRef<EventSource | null>(null);
-
-  // Stream logs from SSE — only for "processing" (button-triggered), not "uploading"
-  useEffect(() => {
-    if (status !== "processing") return;
-    if (esRef.current) return; // Already connected
-    const es = new EventSource("/api/process-stream");
-    esRef.current = es;
-    es.onmessage = (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.type === "log" && data.line) setLogs(prev => [...prev, data.line]);
-        else if (data.type === "done" && data.ok) {
-          setLogs(prev => [...prev, "✓ Final video assembled!"]);
-          es.close();
-          esRef.current = null;
-        } else if (data.type === "error") {
-          setLogs(prev => [...prev, "✗ Error: " + (data.error || "unknown")]);
-          es.close();
-          esRef.current = null;
-        }
-      } catch {}
-    };
-    es.onerror = () => {
-      setLogs(p => [...p, "Stream disconnected... server may still be working."]);
-    };
-    return () => { es.close(); esRef.current = null; };
-  }, [status]);
 
   // Auto-scroll log panel
   useEffect(() => {
@@ -51,20 +22,36 @@ export default function Page() {
 
   function fmt(s?: number) { return `${(s ?? 0).toFixed(1)}s`; }
 
+  async function computeHash(file: File): Promise<string> {
+    const buffer = await file.arrayBuffer();
+    const hashBuffer = await crypto.subtle.digest("MD5", buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
   async function submit() {
     if (!file) return;
-    setStatus("processing");
+    setStatus("uploading");
     setLogs([`Uploading ${file.name}...`]);
     setError("");
     try {
       const fd = new FormData();
       fd.append("video", file);
+      const hash = await computeHash(file);
+      fd.append("hash", hash);
       const r = await fetch("/api/upload", { method: "POST", body: fd });
-      if (!r.ok) { const j = await r.json(); throw new Error(j.error); }
       const j = await r.json();
-      setStatus("done");
+      if (j.duplicate) {
+        setStatus("error");
+        setError(`Same video already uploaded (${j.existingDir})`);
+        return;
+      }
+      if (!r.ok) throw new Error(j.error);
+      setStatus("processing");
+      setLogs([`Uploading done. Detecting motion + cutting...`]);
       setResult(j);
-      if (j.logs) setLogs(j.logs);
+      setStatus("done");
+      setLogs(prev => [...prev, `✓ Done! ${j.segments} segments, ${j.duration.toFixed(1)}s of skating`]);
     } catch (e: any) {
       setStatus("error");
       setError(e.message);
@@ -92,22 +79,25 @@ export default function Page() {
               setFile(f);
               setStatus("idle");
               setResult(null);
-              // Check duplicate immediately when dropped/selected
-              setLogs([`Checking MD5...`]);
-              try {
-                const buf = await f.arrayBuffer();
-                const digest = await crypto.subtle.digest("MD5", buf);
-                const arr = new Uint8Array(digest);
-                const md5 = Array.from(arr).map(b => b.toString(16).padStart(2, "0")).join("");
-                const check = await fetch("/api/check-duplicate?hash=" + md5);
-                if (check.ok) {
-                  const j = await check.json();
+              setIsDuplicate(null);
+              setLogs([`File selected: ${f.name} (${(f.size/1e6).toFixed(1)} MB)`]);
+              // Compute hash and check for duplicates server-side
+              (async () => {
+                try {
+                  const hash = await computeHash(f);
+                  setLogs(prev => [...prev, `Hash: ${hash.slice(0, 8)}…`]);
+                  const r = await fetch(`/api/check-duplicate?hash=${hash}`);
+                  const j = await r.json();
                   if (j.duplicate) {
-                    setStatus("done");
-                    setLogs([`✓ Already uploaded! Found existing: ${j.dir}`]);
+                    setIsDuplicate(true);
+                    setLogs(prev => [...prev, `⚠ Duplicate: ${j.dir}`]);
+                  } else {
+                    setIsDuplicate(false);
                   }
+                } catch (e: any) {
+                  setLogs(prev => [...prev, `Could not check dup: ${e.message}`]);
                 }
-              } catch {}
+              })();
             }}
           />
           {file ? (
@@ -128,56 +118,11 @@ export default function Page() {
       {file && status === "idle" && (
         <button
           onClick={submit}
-          className="bg-white text-neutral-950 font-bold px-8 py-3 rounded-xl hover:bg-neutral-200 transition-colors"
+          disabled={status !== "idle" || isDuplicate === true}
+          className="bg-white text-neutral-950 font-bold px-8 py-3 rounded-xl hover:bg-neutral-200 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
         >
-          Process Video
+          {isDuplicate === true ? "Already in library" : "Process Video"}
         </button>
-      )}
-
-      {/* Process latest without re-upload */}
-      {latestName && status === "idle" && !file && (
-        <div className="flex flex-col items-center gap-2 bg-neutral-900 border border-neutral-700 rounded-xl px-6 py-3">
-          <p className="text-sm text-neutral-300">Latest upload: <b>{latestName}</b></p>
-          <button
-            onClick={async () => {
-              setStatus("processing");
-              setLogs([`Finding latest upload: ${latestName}...`, "Starting motion detection...", "(This may take 1-3 minutes. Watch logs below for live updates.)"]);
-              try {
-                const es = new EventSource("/api/process-stream");
-                es.onmessage = (e) => {
-                  try {
-                    const msg = JSON.parse(e.data);
-                    if (msg.type === "log" && msg.line) {
-                      setLogs(prev => [...prev, msg.line]);
-                    } else if (msg.type === "done" && msg.ok) {
-                      setStatus("done");
-                      setResult(msg);
-                      setLogs(prev => [...prev, "✓ Final video assembled!"]);
-                      es.close();
-                    } else if (msg.type === "error") {
-                      setStatus("error");
-                      setLogs(prev => [...prev, "✗ Error: " + (msg.error || "Unknown")]);
-                      es.close();
-                    }
-                  } catch {}
-                };
-                es.onerror = () => {
-                  setStatus("processing"); // Keep processing since server might be working
-                  setLogs(prev => [...prev, "✗ Stream disconnected — server still working..."]);
-                };
-                // Safety timeout after 10 min
-                setTimeout(() => es.close(), 600000);
-              } catch (e: any) {
-                setStatus("error");
-                setError(e.message || "Failed to connect to stream");
-                setLogs(prev => [...prev, "✗ Stream connection failed"]);
-              }
-            }}
-            className="bg-amber-400 text-neutral-950 font-bold px-6 py-2 rounded-lg hover:bg-amber-300 transition-colors text-sm"
-          >
-            Process Latest Upload (Live Stream)
-          </button>
-        </div>
       )}
 
       {/* Progress */}
@@ -207,15 +152,42 @@ export default function Page() {
               <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse"></span>
               Build logs {logs.length > 0 ? `(${logs.length} lines)` : "(waiting...)"}
             </h3>
-            <label className="flex items-center gap-2 text-sm text-neutral-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={autoScroll}
-                onChange={e => setAutoScroll(e.target.checked)}
-                className="w-4 h-4 accent-amber-400 rounded"
-              />
-              Auto-scroll
-            </label>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => {
+                  const text = logs.join("\n");
+                  if (navigator.clipboard?.writeText) {
+                    navigator.clipboard.writeText(text).then(
+                      () => setLogs(prev => [...prev, "✓ Logs copied to clipboard"]),
+                      () => fallbackCopy(text)
+                    );
+                  } else {
+                    fallbackCopy(text);
+                  }
+                  function fallbackCopy(t: string) {
+                    const ta = document.createElement("textarea");
+                    ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+                    document.body.appendChild(ta); ta.select();
+                    try { document.execCommand("copy"); setLogs(prev => [...prev, "✓ Logs copied to clipboard"]); }
+                    catch { setLogs(prev => [...prev, "✗ Copy failed — your browser blocks clipboard access"]); }
+                    document.body.removeChild(ta);
+                  }
+                }}
+                className="text-xs text-neutral-400 hover:text-white px-2 py-1 rounded border border-neutral-700 hover:border-neutral-500 transition-colors"
+                disabled={!logs.length}
+              >
+                Copy logs
+              </button>
+              <label className="flex items-center gap-2 text-sm text-neutral-400 cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={autoScroll}
+                  onChange={e => setAutoScroll(e.target.checked)}
+                  className="w-4 h-4 accent-amber-400 rounded"
+                />
+                Auto-scroll
+              </label>
+            </div>
           </div>
           <div
             ref={logRef}
@@ -263,7 +235,7 @@ export default function Page() {
           </div>
 
           <button
-            onClick={() => { setFile(null); setStatus("idle"); setResult(null); if (inputRef.current) inputRef.current.value = ""; }}
+            onClick={() => { setFile(null); setStatus("idle"); setResult(null); setIsDuplicate(null); if (inputRef.current) inputRef.current.value = ""; }}
             className="bg-neutral-800 hover:bg-neutral-700 text-white font-semibold px-6 py-2 rounded-xl transition-colors self-center"
           >
             Process another

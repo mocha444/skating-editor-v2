@@ -13,25 +13,25 @@ output_dir = sys.argv[2] if len(sys.argv) > 2 else "/tmp/segments"
 
 # --- Auto 720p proxy for 4K videos (huge speed boost on MOG2 + cutting) ---
 proxy_path = video_path.replace(".mp4", "_720p.mp4")
-use_path = video_path
 if video_path.endswith(".mp4"):
+    import subprocess
+    if not os.path.exists(proxy_path):
+        print(f"[proxy] Creating 720p proxy...", file=sys.stderr)
+        subprocess.run([
+            "ffmpeg", "-y", "-i", video_path,
+            "-vf", "scale=1280:720",
+            "-c:v", "libx264", "-crf", "23", "-preset", "fast",
+            "-c:a", "aac", "-b:a", "128k",
+            proxy_path
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Always use proxy (ffmpeg is more reliable than cv2 for validation)
     if os.path.exists(proxy_path):
-        use_path = proxy_path  # already exists — use it
+        use_path = proxy_path
     else:
-        cap_check = cv2.VideoCapture(video_path)
-        w_check = int(cap_check.get(cv2.CAP_PROP_FRAME_WIDTH))
-        if w_check > 1280:
-            import subprocess
-            print(f"[proxy] Creating 720p proxy for faster MOG2 + cutting...", file=sys.stderr)
-            subprocess.run([
-                "ffmpeg", "-y",
-                "-i", video_path,
-                "-vf", "scale=1280:720",
-                "-c:v", "libx264", "-crf", "23", "-preset", "fast",
-                "-c:a", "aac", "-b:a", "128k",
-                proxy_path
-            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            use_path = proxy_path
+        print(json.dumps({"error": f"proxy creation failed for {video_path}"}), file=sys.stderr)
+        sys.exit(1)
+else:
+    use_path = video_path
 min_contour_area = 50       # ignore small noise
 motion_threshold = 0.003       # 1% of frame must be foreground motion
 min_motion_frames = 8        # sustained motion (at fps=60, that's 0.25s)

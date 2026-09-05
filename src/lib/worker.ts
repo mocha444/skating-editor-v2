@@ -87,7 +87,7 @@ export async function processLatest(): Promise<{ ok: boolean; jobId: string; dir
       const listPath = path.join(UPLOADS_DIR, `skate-process-${id}`, "list.txt");
       await mkdir(path.dirname(listPath), { recursive: true });
       const segFiles = segments.map((_: any, i: number) => path.join(segDir, `seg-${i}.mp4`));
-      await writeFile(listPath, segFiles.map(f => `file '${f}'`).join("\n"));
+      await writeFile(listPath, segFiles.map((f: string) => `file '${f}'`).join("\n"));
       const finalPath = path.join(RESULTS_DIR, `skating_final_${id}.mp4`);
       await appendLog("[concat] Joining segments...");
       await runWithLogs("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", finalPath]);
