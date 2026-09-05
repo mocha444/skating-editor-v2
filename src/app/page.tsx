@@ -42,6 +42,31 @@ export default function Page() {
     return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
   }
 
+  async function processRecent(dir: string) {
+    setStatus("processing");
+    setLogs([`Re-processing ${dir} with current settings...`]);
+    try {
+      const fd = new FormData();
+      fd.append("dir", dir);
+      fd.append("threshold", threshold.toString());
+      fd.append("min-contour", minContour.toString());
+      fd.append("min-motion-frames", minMotionFrames.toString());
+      fd.append("buffer-frames", bufferFrames.toString());
+      fd.append("history", history.toString());
+      fd.append("var-threshold", varThreshold.toString());
+      fd.append("detect-shadows", detectShadows.toString());
+      const r = await fetch("/api/reprocess", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || "reprocess failed");
+      setResult(j);
+      setStatus("done");
+      setLogs(prev => [...prev, `✓ Re-processed! ${j.segments} segments (${j.duration?.toFixed(1)}s)`]);
+    } catch (e: any) {
+      setStatus("error");
+      setError(e.message);
+    }
+  }
+
   async function submit() {
     if (!file) return;
     setStatus("uploading");
@@ -88,11 +113,18 @@ export default function Page() {
         {recent.length > 0 ? (
           <div className="space-y-2">
             {recent.map(r => (
-              <div key={r.dir} className="bg-neutral-900 border border-neutral-700 rounded-xl p-3 flex justify-between items-center">
-                <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:text-amber-300 text-sm font-mono underline">
-                  {r.dir}
+              <div key={r.dir} className="bg-neutral-900 border border-neutral-700 rounded-xl p-3 flex gap-3 items-start">
+                <a href={r.url} target="_blank" rel="noopener noreferrer" className="shrink-0">
+                  <video src={r.url} className="w-40 h-28 rounded-lg object-cover bg-black border border-neutral-700 hover:border-amber-400 transition-colors" preload="metadata" muted />
                 </a>
-                <span className="text-xs text-neutral-500">{r.date}</span>
+                <div className="flex-1 min-w-0 flex flex-col gap-1">
+                  <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:text-amber-300 text-sm font-mono underline truncate">{r.dir}</a>
+                  <span className="text-xs text-neutral-500">{r.date}</span>
+                  <button
+                    onClick={() => processRecent(r.dir)}
+                    className="mt-1 text-xs bg-amber-400 text-neutral-950 font-bold px-3 py-1 rounded hover:bg-amber-300 transition-colors w-fit"
+                  >Re-process with settings</button>
+                </div>
               </div>
             ))}
           </div>
