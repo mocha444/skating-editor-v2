@@ -1,0 +1,65 @@
+# Implementation Plan: Configurable Motion Detection Sensitivity & Segment Padding
+
+## Goal
+Expose motion detection parameters (threshold, min contour area, motion frames, buffer sizes, preprocessing) from the UI → pass through to Python scripts → enable dynamic adjustment of video processing sensitivity.
+
+## Plan
+
+### 1. `src/app/page.tsx` - Add UI controls for detection parameters
+- Add sliders/inputs for: Sensitivity threshold, Min contour area, Min motion frames, Pre-roll buffer, Post-roll buffer
+- Pass parameters to API via query string when submitting upload
+- Display parameter values in log panel
+
+### 2. `src/app/api/upload/route.ts` - Accept and forward parameters
+- Extract parameters from form data / query string
+- Pass them to `process_video.py` as command-line arguments
+- Maintain backward compatibility (default values when no params provided)
+
+### 3. `scripts/process_video.py` - Add CLI parameter support
+- Add `argparse` for: `--threshold`, `--min-contour`, `--min-motion-frames`, `--buffer-frames`, `--history`, `--var-threshold`
+- Map UI values to Python variables:
+  - `motion_threshold` ← sensitivity slider (0.001 to 0.05)
+  - `min_contour_area` ← minimum blob size (10 to 200)
+  - `min_motion_frames` ← sustained motion frames (5 to 30)
+  - `buffer_frames` ← pre/post-roll padding in frames (30 to 300)
+  - `history` ← MOG2 history length (100 to 500)
+  - `var_threshold` ← MOG2 variance threshold (10 to 50)
+- Update the progress JSON output to include detected parameters
+
+### 4. `src/lib/worker.ts` - Forward parameters for "process latest"
+- Add `processLatestWithParams(params)` function
+- Pass parameters to the Python script invocation
+- Include params in progress metadata for UI display
+
+### 5. UI feedback
+- Show current parameter values in the log panel
+- Update as user adjusts sliders
+
+## Files to Modify
+
+- `src/app/page.tsx` - Add parameter state and UI controls
+- `src/app/api/upload/route.ts` - Accept and forward CLI params
+- `scripts/process_video.py` - Replace hard-coded tunables with argparse
+- `src/lib/worker.ts` - Add params-forwarding function
+
+## Architecture
+
+```
+UI (page.tsx) ←→ API route ←→ Python process_video.py ←→ Motion detection ←→ Segments
+     ↑                                                                        ↓
+  Parameter panel                                                          FFmpeg cutting
+```
+
+## Backward Compatibility
+- All Python parameters have default values matching current hard-coded values
+- If no parameters sent, system behaves exactly as before
+- Query string params optional; FormData params optional
+
+## Current Hard-Coded Values (to be made configurable)
+- `min_contour_area = 50`
+- `motion_threshold = 0.003`
+- `min_motion_frames = 8`
+- `buffer_frames = 60`
+- `history = 300`
+- `var_threshold = 25`
+- `detect_shadows = False`
