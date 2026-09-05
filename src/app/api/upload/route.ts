@@ -189,6 +189,10 @@ export async function POST(req: NextRequest) {
       meta.status = "done"; meta.result = result; meta.finished = Date.now();
       require("fs").writeFileSync(metaPath2, JSON.stringify(meta));
       appendLog(id, "[done] Final video ready");
+      const metaDone = JSON.parse(require("fs").readFileSync(metaPath2, "utf8"));
+      const elapsedMs = (metaDone.finished || Date.now()) - (metaDone.started || metaDone.finished || Date.now());
+      const elapsedSec = (elapsedMs / 1000).toFixed(1);
+      appendLog(id, `[timing] Total elapsed: ${elapsedSec}s`);
     } catch (e: any) {
       writeProgress(id, 0, "error");
       appendLog(id, `[error] ${e.message}`);

@@ -111,6 +111,10 @@ export async function POST(req: Request) {
         concat.on("close", c => c === 0 ? res() : rej(new Error("ffmpeg concat failed")));
       });
       appendLog(jobId, "[done] Final video ready");
+      const metaDone2 = JSON.parse(require("fs").readFileSync(path.join(PROGRESS_DIR, jobId + ".json"), "utf8"));
+      const elapsedMs2 = (metaDone2.finished || Date.now()) - (metaDone2.started || metaDone2.finished || Date.now());
+      const elapsedSec2 = (elapsedMs2 / 1000).toFixed(1);
+      appendLog(jobId, `[timing] Total elapsed: ${elapsedSec2}s`);
       writeMeta(jobId, { jobId, dir, status: "done", percent: 100, stage: "done", finished: Date.now(), result: {
         ok: true,
         segments: segments.length,
