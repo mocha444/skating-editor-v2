@@ -20,7 +20,11 @@ export default function Page() {
   const [history, setHistory] = useState(300);
   const [varThreshold, setVarThreshold] = useState(25);
   const [detectShadows, setDetectShadows] = useState(false);
-  const [recent, setRecent] = useState<{dir:string;url:string;date:string}[]>([]);
+  const [progress, setProgress] = useState({ percent: 0, stage: "" });
+  const [pollInterval, setPollInterval] = useState<NodeJS.Timeout | null>(null);
+  const [recent, setRecent] = useState<{
+    durationLabel: string;dir:string;url:string;date:string
+}[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -119,10 +123,39 @@ export default function Page() {
         return;
       }
       if (!r.ok) throw new Error(j.error);
-      setLogs(prev => [...prev, `Motion detected! Found ${j.segments} segments — cutting clips...`]);
-      setResult(j);
-      setStatus("done");
-      setLogs(prev => [...prev, `✓ Done! ${j.segments} segments, ${j.duration?.toFixed(1)}s of skating`]);
+      if (!j.jobId) throw new Error("No jobId returned");
+      // Poll progress
+      setProgress({ percent: j.percent || 10, stage: j.stage || "saving" });
+      const poll = setInterval(async () => {
+        try {
+          const pr = await fetch(`/api/progress/${j.jobId}?jobId=${j.jobId}`);
+          if (pr.ok) {
+            const meta = await pr.json();
+            setProgress({ percent: meta.percent || 0, stage: meta.stage || "" });
+            if (meta.log && meta.log.length) {
+              setLogs(prev => {
+                const last = prev[prev.length - 1];
+                if (meta.log[meta.log.length - 1] === last) return prev;
+                return [...prev, meta.log[meta.log.length - 1]];
+              });
+            }
+            if (meta.status === "done" || meta.result) {
+              clearInterval(poll);
+              setPollInterval(null);
+              setStatus("done");
+              setResult(meta.result || j);
+              setProgress({ percent: 100, stage: "done" });
+              setLogs(prev => [...prev, `✓ Done! ${meta.result?.segments || j.segments} segments`]);
+            } else if (meta.status === "error") {
+              clearInterval(poll);
+              setPollInterval(null);
+              setStatus("error");
+              setError(meta.error || "Processing failed");
+            }
+          }
+        } catch {}
+      }, 2000);
+      setPollInterval(poll);
     } catch (e: any) {
       setStatus("error");
       setError(e.message);
@@ -136,9 +169,9 @@ export default function Page() {
 
       {/* Recent uploads */}
       <div className="w-full max-w-2xl">
-        <h2 className="text-sm font-bold text-neutral-400 mb-2">Most Recent Uploads</h2>
-        {recent.length > 0 ? (
+        {recent.length > 0 && (
           <div className="space-y-2">
+             <h2 className="text-sm font-bold text-neutral-400 mb-2">Most Recent Uploads</h2>
             {recent.map(r => (
               <div key={r.dir} className="bg-neutral-900 border border-neutral-700 rounded-xl p-3 flex gap-3 items-start">
                 <a href={r.url} target="_blank" rel="noopener noreferrer" className="shrink-0">
@@ -159,8 +192,6 @@ export default function Page() {
               </div>
             ))}
           </div>
-        ) : (
-          <p className="text-neutral-500 text-sm">No uploads yet</p>
         )}
       </div>
 
@@ -241,11 +272,11 @@ export default function Page() {
       {/* Progress */}
       {(status === "uploading" || status === "processing") && (
         <div className="flex flex-col items-center gap-3">
-          <div className="text-lg animate-pulse">
-            {status === "uploading" ? "Uploading..." : "Detecting motion + cutting..."}
+          <div className="text-lg font-semibold">
+            {progress.stage ? `${progress.stage.replace("_", " ").toUpperCase()} — ${progress.percent}%` : (status === "uploading" ? "Uploading..." : "Processing...")}
           </div>
-          <div className="w-64 h-2 bg-neutral-800 rounded-full overflow-hidden">
-            <div className="h-full bg-white rounded-full animate-pulse" style={{ width: "60%" }} />
+          <div className="w-64 h-3 bg-neutral-800 rounded-full overflow-hidden border border-neutral-700">
+            <div className="h-full bg-gradient-to-r from-amber-400 to-amber-200 rounded-full transition-all duration-700 ease-out" style={{ width: `${progress.percent || (status === "uploading" ? 10 : 60)}%` }} />
           </div>
         </div>
       )}
