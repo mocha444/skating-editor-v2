@@ -119,7 +119,7 @@ export default function Page() {
                 </a>
                 <div className="flex-1 min-w-0 flex flex-col gap-1">
                   <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:text-amber-300 text-sm font-mono underline truncate">{r.dir}</a>
-                  <span className="text-xs text-neutral-500">{r.date}</span>
+                  <span className="text-xs text-neutral-500">{r.date} · {r.durationLabel || "—"}</span>
                   <button
                     onClick={() => processRecent(r.dir)}
                     className="mt-1 text-xs bg-amber-400 text-neutral-950 font-bold px-3 py-1 rounded hover:bg-amber-300 transition-colors w-fit"
