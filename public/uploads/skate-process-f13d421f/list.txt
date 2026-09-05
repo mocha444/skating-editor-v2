@@ -1,5 +1,0 @@
-file '/home/b/skating-editor-v2/public/uploads/skate-6172feba/segments/seg-0.mp4'
-file '/home/b/skating-editor-v2/public/uploads/skate-6172feba/segments/seg-1.mp4'
-file '/home/b/skating-editor-v2/public/uploads/skate-6172feba/segments/seg-2.mp4'
-file '/home/b/skating-editor-v2/public/uploads/skate-6172feba/segments/seg-3.mp4'
-file '/home/b/skating-editor-v2/public/uploads/skate-6172feba/segments/seg-4.mp4'

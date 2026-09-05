@@ -36,10 +36,20 @@ export default function Page() {
   function fmt(s?: number) { return `${(s ?? 0).toFixed(1)}s`; }
 
   async function computeHash(file: File): Promise<string> {
-    const buffer = await file.arrayBuffer();
-    const hashBuffer = await crypto.subtle.digest("MD5", buffer);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    try {
+      const buffer = await file.arrayBuffer();
+      const hashBuffer = await crypto.subtle.digest("MD5", buffer);
+      const hashArray = Array.from(new Uint8Array(hashBuffer));
+      return hashArray.map(b => b.toString(16).padStart(2, "0")).join("");
+    } catch {
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/hash", { method: "POST", body: fd });
+      const text = await r.text();
+      let j; try { j = JSON.parse(text); } catch { throw new Error("Server returned non-JSON: " + text.slice(0, 60)); }
+      if (!r.ok || !j.hash) throw new Error("Hash computation failed");
+      return j.hash;
+    }
   }
 
   async function processRecent(dir: string) {
@@ -64,6 +74,19 @@ export default function Page() {
     } catch (e: any) {
       setStatus("error");
       setError(e.message);
+    }
+  }
+
+  async function deleteRecent(dir: string) {
+    if (!confirm(`Delete ${dir} and all its segments? This cannot be undone.`)) return;
+    const fd = new FormData();
+    fd.append("dir", dir);
+    const r = await fetch("/api/delete", { method: "POST", body: fd });
+    if (r.ok) {
+      setRecent(prev => prev.filter(x => x.dir !== dir));
+      setLogs(prev => [...prev, `Deleted: ${dir}`]);
+    } else {
+      alert("Failed to delete.");
     }
   }
 
@@ -124,6 +147,10 @@ export default function Page() {
                     onClick={() => processRecent(r.dir)}
                     className="mt-1 text-xs bg-amber-400 text-neutral-950 font-bold px-3 py-1 rounded hover:bg-amber-300 transition-colors w-fit"
                   >Re-process with settings</button>
+                  <button
+                    onClick={() => deleteRecent(r.dir)}
+                    className="mt-1 text-xs bg-red-900 text-red-300 border border-red-700 px-3 py-1 rounded hover:bg-red-800 transition-colors w-fit"
+                  >Delete</button>
                 </div>
               </div>
             ))}

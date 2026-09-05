@@ -7,13 +7,10 @@ require sustained motion to start/end a clip.
 import cv2, sys, os, json, argparse
 from collections import deque
 
-# --- Tunables ---
-import argparse
-video_path = sys.argv[1]
-output_dir = sys.argv[2] if len(sys.argv) > 2 else "/tmp/segments"
-
-# Parse command-line arguments
+# --- Tunables (parse from CLI) ---
 parser = argparse.ArgumentParser()
+parser.add_argument('video_path', help='path to input video')
+parser.add_argument('output_dir', nargs='?', default='/tmp/segments', help='where to write segment files')
 parser.add_argument('--threshold', type=float, default=0.003, help='motion threshold (fraction of frame)')
 parser.add_argument('--min-contour', type=int, default=50, help='minimum contour area')
 parser.add_argument('--min-motion-frames', type=int, default=8, help='sustained motion frames')
@@ -23,7 +20,8 @@ parser.add_argument('--var-threshold', type=int, default=25, help='MOG2 variance
 parser.add_argument('--detect-shadows', action='store_true', default=False, help='detect shadow pixels')
 args = parser.parse_args()
 
-# Map args to variables
+video_path = args.video_path
+output_dir = args.output_dir
 min_contour_area = args.min_contour
 motion_threshold = args.threshold
 min_motion_frames = args.min_motion_frames
@@ -45,7 +43,6 @@ if video_path.endswith(".mp4"):
             "-c:a", "aac", "-b:a", "128k",
             proxy_path
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    # Always use proxy (ffmpeg is more reliable than cv2 for validation)
     if os.path.exists(proxy_path):
         use_path = proxy_path
     else:
@@ -53,13 +50,6 @@ if video_path.endswith(".mp4"):
         sys.exit(1)
 else:
     use_path = video_path
-min_contour_area = 50       # ignore small noise
-motion_threshold = 0.003       # 1% of frame must be foreground motion
-min_motion_frames = 8        # sustained motion (at fps=60, that's 0.25s)
-buffer_frames = 60            # 1s buffer before/after
-history = 300
-var_threshold = 25
-detect_shadows = False
 
 os.makedirs(output_dir, exist_ok=True)
 cap = cv2.VideoCapture(use_path)
