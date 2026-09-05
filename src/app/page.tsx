@@ -266,17 +266,6 @@ export default function Page() {
             <div>
               <p className="text-2xl font-semibold">{file.name}</p>
               <p className="text-amber-300 text-xs font-mono mt-1">type: {file.type || "unknown"} | size: {(file.size/1e6).toFixed(2)} MB | ext: {file.name.split('.').pop()}</p>
-
-              <div className="mt-4 p-3 bg-neutral-800 rounded-xl text-xs text-neutral-300 space-y-2">
-                <p className="font-semibold text-amber-400">Detection Settings</p>
-                <label>Threshold: <input type="range" min="0.0001" max="0.05" step="0.001" value={threshold} onChange={e => setThreshold(parseFloat(e.target.value))} /></label>
-                <label>Min Contour: <input type="range" min="10" max="200" step="5" value={minContour} onChange={e => setMinContour(parseInt(e.target.value))} /></label>
-                <label>Min Motion Frames: <input type="range" min="5" max="30" step="1" value={minMotionFrames} onChange={e => setMinMotionFrames(parseInt(e.target.value))} /></label>
-                <label>Buffer Frames: <input type="range" min="30" max="300" step="10" value={bufferFrames} onChange={e => setBufferFrames(parseInt(e.target.value))} /></label>
-                <label>History: <input type="range" min="100" max="500" step="50" value={history} onChange={e => setHistory(parseInt(e.target.value))} /></label>
-                <label>Var Threshold: <input type="range" min="10" max="50" step="5" value={varThreshold} onChange={e => setVarThreshold(parseInt(e.target.value))} /></label>
-                <label>Detect Shadows: <input type="checkbox" checked={detectShadows} onChange={e => setDetectShadows(e.target.checked)} /></label>
-              </div>
             </div>
           ) : (
             <>
