@@ -212,7 +212,7 @@ export default function Page() {
                   <button
                     onClick={() => processRecent(r.dir)}
                     className="mt-1 text-xs bg-amber-400 text-neutral-950 font-bold px-3 py-1 rounded hover:bg-amber-300 transition-colors w-fit"
-                  >Re-process with settings</button>
+                  >Re-process video</button>
                   <button
                     onClick={() => deleteRecent(r.dir)}
                     className="mt-1 text-xs bg-red-900 text-red-300 border border-red-700 px-3 py-1 rounded hover:bg-red-800 transition-colors w-fit"
