@@ -1,0 +1,2 @@
+file '/home/b/skating-editor-v2/public/uploads/skate-929312cd/segments/seg-0.mp4'
+file '/home/b/skating-editor-v2/public/uploads/skate-929312cd/segments/seg-1.mp4'

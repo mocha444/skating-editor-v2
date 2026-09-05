@@ -24,6 +24,13 @@ async function run(cmd: string, args: string[]): Promise<string> {
   });
 }
 
+function fmtBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+
 async function computeFileHash(filePath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const hash = createHash("md5");
@@ -46,7 +53,7 @@ export async function POST(req: NextRequest) {
   const varThreshold = formData.get("var-threshold") as string | null;
   const detectShadows = formData.get("detect-shadows") as string | null;
   if (!file) return NextResponse.json({ error: "no file" }, { status: 400 });
-  console.log("[upload] received:", file.name, "| size:", file.size, "| hash:", clientHash);
+  console.log(`[upload] received: ${file.name} | size: ${fmtBytes(file.size)} (${file.size} bytes) | hash: ${clientHash}`);
 
   // Fast duplicate check using client-provided hash + stored hash files
   const uploadsDir = await readdir(UPLOADS_DIR, { withFileTypes: true });

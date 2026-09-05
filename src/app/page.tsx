@@ -99,6 +99,7 @@ export default function Page() {
       const fd = new FormData();
       fd.append("video", file);
       const hash = await computeHash(file);
+      setLogs(prev => [...prev, `Hash: ${hash.slice(0, 8)}… — submitting for processing`]);
       fd.append("hash", hash);
       fd.append("threshold", threshold.toString());
       fd.append("min-contour", minContour.toString());
@@ -107,22 +108,25 @@ export default function Page() {
       fd.append("history", history.toString());
       fd.append("var-threshold", varThreshold.toString());
       fd.append("detect-shadows", detectShadows.toString());
+      setStatus("processing");
+      setLogs(prev => [...prev, `Running MOG2 motion detection on video...`]);
       const r = await fetch("/api/upload", { method: "POST", body: fd });
       const j = await r.json();
       if (j.duplicate) {
         setStatus("error");
         setError(`Same video already uploaded (${j.existingDir})`);
+        setLogs(prev => [...prev, `⚠ Duplicate detected: ${j.existingDir}`]);
         return;
       }
       if (!r.ok) throw new Error(j.error);
-      setStatus("processing");
-      setLogs([`Uploading done. Detecting motion + cutting...`]);
+      setLogs(prev => [...prev, `Motion detected! Found ${j.segments} segments — cutting clips...`]);
       setResult(j);
       setStatus("done");
-      setLogs(prev => [...prev, `✓ Done! ${j.segments} segments, ${j.duration.toFixed(1)}s of skating`]);
+      setLogs(prev => [...prev, `✓ Done! ${j.segments} segments, ${j.duration?.toFixed(1)}s of skating`]);
     } catch (e: any) {
       setStatus("error");
       setError(e.message);
+      setLogs(prev => [...prev, `✗ Error: ${e.message}`]);
     }
   }
 
