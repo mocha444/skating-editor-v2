@@ -51,7 +51,7 @@ export async function POST(req: Request) {
         serverHash = await new Promise<string>((res, rej) => {
           const hash = createHash("md5");
           const s = require("fs").createReadStream(inPath);
-          s.on("data", d => hash.update(d));
+          s.on("data", (d: Buffer) => hash.update(d));
           s.on("end", () => res(hash.digest("hex")));
           s.on("error", rej);
         });
