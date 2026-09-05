@@ -45,6 +45,7 @@ const worker = new Worker('video-process', async (job: Job) => {
   detectArgs.push("--buffer-frames", bufferFrames || "60");
   detectArgs.push("--history", historyStr || "300");
   detectArgs.push("--var-threshold", varThreshold || "25");
+  detectArgs.push("--max-fps", "30");
   if (detectShadows === "true") detectArgs.push("--detect-shadows");
 
   let detectOutRaw = "", detectErr = "";
@@ -85,7 +86,7 @@ const worker = new Worker('video-process', async (job: Job) => {
   await writeFile(listPath, segFiles.map(f => `file '${f}'`).join("\n"));
   const finalPath = path.join(RESULTS_DIR, `skating_final_${id}.mp4`);
   await new Promise((res, rej) => {
-    const concat = spawn("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", finalPath]);
+    const concat = spawn("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", finalPath]);
     concat.on("close", c => c === 0 ? res(true) : rej(new Error("ffmpeg concat failed")));
   });
   appendLog(id, "[concat] Done!");
@@ -126,7 +127,7 @@ const worker = new Worker('video-process', async (job: Job) => {
   return result;
 }, {
   connection: redis,
-  concurrency: 2,
+  concurrency: 1,
 });
 
 worker.on('completed', (job) => console.log(`[worker] Job ${job.id} completed`));

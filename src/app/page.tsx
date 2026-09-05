@@ -146,9 +146,9 @@ export default function Page() {
     setError("");
     try {
       const fd = new FormData();
-      fd.append("video", file);
       const hash = await computeHash(file);
       setLogs(prev => [...prev, `Hash: ${hash.slice(0, 8)}… — submitting for processing`]);
+      // hash + params first so the server can reject duplicates before bytes hit disk
       fd.append("hash", hash);
       fd.append("threshold", threshold.toString());
       fd.append("min-contour", minContour.toString());
@@ -157,6 +157,7 @@ export default function Page() {
       fd.append("history", history.toString());
       fd.append("var-threshold", varThreshold.toString());
       fd.append("detect-shadows", detectShadows.toString());
+      fd.append("video", file);
       setStatus("processing");
       setLogs(prev => [...prev, `Running MOG2 motion detection on video...`]);
       const r = await fetch("/api/upload", { method: "POST", body: fd });
