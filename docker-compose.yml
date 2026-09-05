@@ -28,6 +28,11 @@ services:
     volumes:
       - media_data:/app/data
       - .:/app
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "993"
+      - "44"
     depends_on:
       redis:
         condition: service_started

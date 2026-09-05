@@ -4,6 +4,7 @@ WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip ffmpeg libgl1 libglib2.0-0 \
+    intel-media-va-driver libva2 vainfo \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages --no-cache-dir opencv-python-headless numpy \
     && useradd -m node || true
