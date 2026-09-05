@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
-import { writeFile, mkdir, readFile, readdir } from "fs/promises";
+import { mkdir, writeFile, readFile, readdir } from "fs/promises";
+import { createReadStream } from "fs";
+import { pipeline } from "stream/promises";
+import { createWriteStream } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { createHash } from "crypto";
@@ -30,16 +33,18 @@ export async function POST(req: NextRequest) {
 
   // Fast duplicate check using client-provided hash + stored hash files
   const uploadsDir = await readdir(UPLOADS_DIR, { withFileTypes: true });
-  for (const entry of uploadsDir) {
-    if (!entry.isDirectory() || !entry.name.startsWith("skate-")) continue;
-    try {
-      const hashPath = path.join(UPLOADS_DIR, entry.name, "hash.md5");
-      const storedHash = (await readFile(hashPath, "utf8")).trim();
-      if (storedHash === clientHash) {
-        console.log(`[upload] duplicate: ${file.name} matches ${entry.name}`);
-        return NextResponse.json({ ok: false, duplicate: true, existingDir: entry.name, message: "Same video already uploaded" });
-      }
-    } catch {}
+  if (clientHash) {
+    for (const entry of uploadsDir) {
+      if (!entry.isDirectory() || !entry.name.startsWith("skate-")) continue;
+      try {
+        const hashPath = path.join(UPLOADS_DIR, entry.name, "hash.md5");
+        const storedHash = (await readFile(hashPath, "utf8")).trim();
+        if (storedHash === clientHash) {
+          console.log(`[upload] duplicate: ${file.name} matches ${entry.name}`);
+          return NextResponse.json({ ok: false, duplicate: true, existingDir: entry.name, message: "Same video already uploaded" });
+        }
+      } catch {}
+    }
   }
 
   // Save hash first so future dup checks are instant
@@ -58,8 +63,19 @@ export async function POST(req: NextRequest) {
   await mkdir(segDir, { recursive: true });
 
   const inPath = path.join(workDir, "input.mp4");
-  const buf = Buffer.from(await file.arrayBuffer());
-  await writeFile(inPath, buf);
+  // Stream the upload to disk instead of buffering the whole file in memory
+  const { Readable } = await import("stream");
+  const webStream = file.stream() as unknown as ReadableStream<Uint8Array>;
+  const nodeStream = Readable.fromWeb(webStream as any);
+  await pipeline(nodeStream, createWriteStream(inPath));
+
+  // Validate file integrity with ffmpeg before processing
+  try {
+    await run("ffmpeg", ["-v", "quiet", "-i", inPath, "-t", "0.1", "-f", "null", "-"]);
+  } catch (e: any) {
+    await import("fs/promises").then(f => f.unlink(inPath));
+    return NextResponse.json({ error: "corrupt video file (truncated upload?) — please re-upload the full file from your camera and don't refresh during upload", fileName: file.name }, { status: 400 });
+  }
 
   // 1) Detect motion via Python/OpenCV
   const detectOut = await run("python3", [
