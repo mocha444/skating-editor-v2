@@ -72,9 +72,38 @@ export default function Page() {
       const r = await fetch("/api/reprocess", { method: "POST", body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || "reprocess failed");
-      setResult(j);
-      setStatus("done");
-      setLogs(prev => [...prev, `✓ Re-processed! ${j.segments} segments (${j.duration?.toFixed(1)}s)`]);
+      if (!j.jobId) throw new Error("No jobId returned");
+      setStatus("processing");
+      setProgress({ percent: 5, stage: "starting" });
+      setLogs(prev => [...prev, `Re-processing ${dir} with current settings (job: ${j.jobId})...`]);
+      const poll = setInterval(async () => {
+        try {
+          const pr = await fetch(`/api/progress/${j.jobId}?jobId=${j.jobId}`);
+          if (pr.ok) {
+            const meta = await pr.json();
+            setProgress({ percent: meta.percent || 0, stage: meta.stage || "" });
+            if (meta.log && meta.log.length) {
+              setLogs(prev => {
+                const last = prev[prev.length - 1];
+                if (meta.log[meta.log.length - 1] === last) return prev;
+                return [...prev, meta.log[meta.log.length - 1]];
+              });
+            }
+            if (meta.status === "done" || meta.result) {
+              clearInterval(poll);
+              setStatus("done");
+              setResult(meta.result || j);
+              setProgress({ percent: 100, stage: "done" });
+              setLogs(prev => [...prev, `✓ Re-processed! ${meta.result?.segments || j.segments} segments`]);
+            } else if (meta.status === "error") {
+              clearInterval(poll);
+              setStatus("error");
+              setError(meta.error || "Re-processing failed");
+            }
+          }
+        } catch {}
+      }, 2000);
+      setPollInterval(poll);
     } catch (e: any) {
       setStatus("error");
       setError(e.message);

@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { spawn } from "child_process";
-import { mkdir, writeFile, readFile, readdir, stat } from "fs/promises";
-import { createReadStream } from "fs";
+import { mkdir, writeFile, readFile } from "fs/promises";
 import path from "path";
 import { randomUUID, createHash } from "crypto";
 
@@ -9,25 +8,14 @@ export const runtime = "nodejs";
 const PROJECT_ROOT = process.cwd();
 const UPLOADS_DIR = path.join(PROJECT_ROOT, "public", "uploads");
 const RESULTS_DIR = path.join(PROJECT_ROOT, "public", "results");
+const PROGRESS_DIR = path.join(PROJECT_ROOT, "public", "uploads", "progress");
 
-async function run(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const p = spawn(cmd, args);
-    let out = "", err = "";
-    p.stdout.on("data", d => (out += d.toString()));
-    p.stderr.on("data", d => (err += d.toString()));
-    p.on("close", code => code === 0 ? resolve(out) : reject(new Error(`${cmd} failed: ${err}`)));
-  });
+function appendLog(id: string, line: string) {
+  require("fs").appendFileSync(path.join(PROGRESS_DIR, id + ".log"), line + "\n");
 }
 
-async function computeFileHash(filePath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const hash = createHash("md5");
-    const stream = createReadStream(filePath);
-    stream.on("data", d => hash.update(d));
-    stream.on("end", () => resolve(hash.digest("hex")));
-    stream.on("error", reject);
-  });
+function writeMeta(id: string, data: object) {
+  require("fs").writeFileSync(path.join(PROGRESS_DIR, id + ".json"), JSON.stringify(data));
 }
 
 export async function POST(req: Request) {
@@ -37,58 +25,106 @@ export async function POST(req: Request) {
   const minContour = form.get("min-contour") as string;
   const minMotionFrames = form.get("min-motion-frames") as string;
   const bufferFrames = form.get("buffer-frames") as string;
-  const historyVal = form.get("history") as string;
+  const historyStr = form.get("history") as string;
   const varThreshold = form.get("var-threshold") as string;
   const detectShadows = form.get("detect-shadows") as string;
 
+  if (!dir || dir.includes("..") || dir.includes("/")) {
+    return NextResponse.json({ error: "invalid dir" }, { status: 400 });
+  }
+
+  const jobId = randomUUID().slice(0, 8);
   const inPath = path.join(UPLOADS_DIR, dir, "input.mp4");
   const segDir = path.join(UPLOADS_DIR, dir, "segments");
+
+  await mkdir(PROGRESS_DIR, { recursive: true });
   await mkdir(segDir, { recursive: true });
+  writeMeta(jobId, { jobId, dir, status: "running", started: Date.now(), percent: 5, stage: "starting" });
 
-  // Ensure hash is stored (compute if missing)
-  const hashPath = path.join(UPLOADS_DIR, dir, "hash.md5");
-  let serverHash: string;
-  try {
-    serverHash = (await readFile(hashPath, "utf8")).trim();
-  } catch {
-    serverHash = await computeFileHash(inPath);
-    await writeFile(hashPath, serverHash, "utf8");
-  }
+  // Background processing
+  (async () => {
+    try {
+      // Ensure hash is stored
+      const hashPath = path.join(UPLOADS_DIR, dir, "hash.md5");
+      let serverHash: string;
+      try { serverHash = (await readFile(hashPath, "utf8")).trim(); } catch {
+        serverHash = await new Promise<string>((res, rej) => {
+          const hash = createHash("md5");
+          const s = require("fs").createReadStream(inPath);
+          s.on("data", d => hash.update(d));
+          s.on("end", () => res(hash.digest("hex")));
+          s.on("error", rej);
+        });
+        await writeFile(hashPath, serverHash, "utf8");
+      }
 
-  const detectArgs = [path.join(PROJECT_ROOT, "scripts", "process_video.py"), inPath, segDir];
-  if (threshold) detectArgs.push("--threshold", threshold);
-  if (minContour) detectArgs.push("--min-contour", minContour);
-  if (minMotionFrames) detectArgs.push("--min-motion-frames", minMotionFrames);
-  if (bufferFrames) detectArgs.push("--buffer-frames", bufferFrames);
-  if (historyVal) detectArgs.push("--history", historyVal);
-  if (varThreshold) detectArgs.push("--var-threshold", varThreshold);
-  if (detectShadows === "true") detectArgs.push("--detect-shadows");
+      appendLog(jobId, `[reprocess] Starting with threshold=${threshold || 0.003} contour=${minContour || 50} frames=${minMotionFrames || 8} buffer=${bufferFrames || 60}`);
 
-  const detectOut = await run("python3", detectArgs);
-  const { segments } = JSON.parse(detectOut);
-  if (!segments || !segments.length) return NextResponse.json({ error: "no motion detected" }, { status: 400 });
+      // Detect motion — always from scratch (no proxy skip for detection)
+      writeMeta(jobId, { jobId, dir, status: "running", percent: 20, stage: "detect" });
+      appendLog(jobId, "[mog2] Starting motion detection...");
+      const detectArgs = [path.join(PROJECT_ROOT, "scripts", "process_video.py"), inPath, segDir];
+      if (threshold) detectArgs.push("--threshold", threshold);
+      if (minContour) detectArgs.push("--min-contour", minContour);
+      if (minMotionFrames) detectArgs.push("--min-motion-frames", minMotionFrames);
+      if (bufferFrames) detectArgs.push("--buffer-frames", bufferFrames);
+      if (historyStr) detectArgs.push("--history", historyStr);
+      if (varThreshold) detectArgs.push("--var-threshold", varThreshold);
+      if (detectShadows === "true") detectArgs.push("--detect-shadows");
 
-  const segFiles: string[] = [];
-  for (let i = 0; i < segments.length; i++) {
-    const [s, e] = segments[i];
-    if (e - s < 0.5) continue;
-    const f = path.join(segDir, `seg-${i}.mp4`);
-    await run("ffmpeg", ["-y", "-ss", String(s), "-i", inPath, "-t", String(e - s), "-c", "copy", f]);
-    segFiles.push(f);
-  }
+      const detectOut = await new Promise<string>((res, rej) => {
+        const p = spawn("python3", detectArgs);
+        let out = "", err = "";
+        p.stdout.on("data", d => { out += d.toString(); appendLog(jobId, d.toString().trim()); });
+        p.stderr.on("data", d => { err += d.toString(); });
+        p.on("close", code => code === 0 ? res(out) : rej(new Error(err.slice(-300))));
+      });
 
-  const listPath = path.join(UPLOADS_DIR, `${dir}`, "list.txt");
-  await writeFile(listPath, segFiles.map(f => `file '${f}'`).join("\n"));
-  const finalPath = path.join(RESULTS_DIR, `skating_final_${dir}.mp4`);
-  await run("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", finalPath]);
+      const { segments } = JSON.parse(detectOut);
+      if (!segments || !segments.length) throw new Error("no motion detected");
+      writeMeta(jobId, { jobId, dir, status: "running", percent: 55, stage: "detect_done" });
+      appendLog(jobId, `[mog2] Found ${segments.length} segments`);
 
-  return NextResponse.json({
-    ok: true,
-    segments: segments.length,
-    duration: segments.reduce((a: number, [s, e]: number[]) => a + (e - s), 0),
-    finalUrl: `/results/skating_final_${dir}.mp4`,
-    rawSegments: segments,
-    segUrls: segFiles.map((f, i) => `/uploads/${dir}/segments/seg-${i}.mp4`),
-    hash: serverHash,
-  });
+      // Cut segments
+      const segFiles: string[] = [];
+      for (let i = 0; i < segments.length; i++) {
+        const [s, e] = segments[i];
+        if (e - s < 0.5) continue;
+        const f = path.join(segDir, `seg-${i}.mp4`);
+        writeMeta(jobId, { jobId, dir, status: "running", percent: 55 + Math.round((30 * (i + 1)) / segments.length), stage: "cutting" });
+        appendLog(jobId, `[cut] ${i + 1}/${segments.length} ${s.toFixed(2)}s → ${e.toFixed(2)}s`);
+        await new Promise<void>((res, rej) => {
+          const cut = spawn("ffmpeg", ["-y", "-ss", String(s), "-i", inPath, "-t", String(e - s), "-c", "copy", f]);
+          cut.on("close", c => c === 0 ? res() : rej(new Error("ffmpeg cut failed")));
+        });
+        segFiles.push(f);
+      }
+
+      // Concat
+      writeMeta(jobId, { jobId, dir, status: "running", percent: 88, stage: "concat" });
+      const listPath = path.join(UPLOADS_DIR, dir, "list.txt");
+      await writeFile(listPath, segFiles.map(f => `file '${f}'`).join("\n"));
+      const finalPath = path.join(RESULTS_DIR, `skating_final_${dir}.mp4`);
+      appendLog(jobId, "[concat] Joining segments...");
+      await new Promise<void>((res, rej) => {
+        const concat = spawn("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", finalPath]);
+        concat.on("close", c => c === 0 ? res() : rej(new Error("ffmpeg concat failed")));
+      });
+      appendLog(jobId, "[done] Final video ready");
+      writeMeta(jobId, { jobId, dir, status: "done", percent: 100, stage: "done", finished: Date.now(), result: {
+        ok: true,
+        segments: segments.length,
+        duration: segments.reduce((a: number, [s, e]: number[]) => a + (e - s), 0),
+        finalUrl: `/results/skating_final_${dir}.mp4`,
+        rawSegments: segments,
+        segUrls: segFiles.map((f, i) => `/uploads/${dir}/segments/seg-${i}.mp4`),
+        hash: serverHash,
+      }});
+    } catch (e: any) {
+      appendLog(jobId, `[error] ${e.message}`);
+      writeMeta(jobId, { jobId, dir, status: "error", error: e.message, finished: Date.now() });
+    }
+  })();
+
+  return NextResponse.json({ ok: true, jobId, dir });
 }
