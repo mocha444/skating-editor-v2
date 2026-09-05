@@ -1,27 +1,31 @@
-# Feature Note — Auto-Cleanup After Download
+# Feature Note — Single-Active-Job Storage + Cleanup
 
-## Goal
-When user clicks a video result and hits "Download", clean up server-side files afterward.
+## Model
+Files live only inside the Docker named volume `media_data` → `/app/data` (shared by app + 2 workers):
 
-## What to clean
-- `public/uploads/skate-*/input.mp4`
-- `public/uploads/skate-*/input_720p.mp4`
-- `public/uploads/skate-*/segments/*.mp4`
-- `public/uploads/skate-*/hash.md5`
-- `public/uploads/skate-*/list.txt`
-- `public/uploads/skate-*/results/*.mp4` (if any)
-- `public/uploads/progress/*.json` + `*.log` for that job
+```
+/app/data/uploads/skate-<id>/input.mp4, hash.md5, list.txt, segments/seg-*.mp4
+/app/data/results/skating_final_<id>.mp4
+/app/data/progress/<jobId>.json + <jobId>.log
+```
 
-## Trigger
-- After `Download` button click in result panel
-- Or optionally after 24h automatic retention period (see cleanup script)
+PostgreSQL keeps only metadata rows (`videos` / `jobs`) — byte-level files are never persisted long-term.
 
-## Implementation
-1. `/api/download/[dir]` endpoint returns the file + schedules cleanup
-2. After download completes (or immediately), call `rm -rf` on the upload dir
-3. Delete progress meta/log for the same `jobId`
-4. Optionally delete from PostgreSQL `videos` and `jobs` tables
+## Cleanup triggers
+1. **New upload** (`POST /api/upload`): after the duplicate check, all existing files under
+   `/app/data/{uploads,results,progress}` are wiped before the new video is saved. Only the
+   current job's files exist at any time.
+2. **Download** (`GET /api/download/<jobId>`): streams the result mp4, then deletes the job's
+   upload dir, result file, and progress meta/log.
+
+## Serving
+Next.js's production server caches `public/` at boot, so runtime files are served by route
+handlers, never from `public/`:
+- `GET /results/[file]` and `GET /uploads/[...path]` — streaming with Range support
+- `/api/download/<jobId>` — attachment, streams then cleans up
+- URLs in the frontend (`result.finalUrl`, segment `Play →`, recent list) are unchanged.
 
 ## Related
-- `scripts/cleanup-progress.js` handles progress file cleanup (cron: weekly)
-- Docker uses `/mnt/external/skating_videos/` — cleanup frees 7TB storage
+- `scripts/cleanup-progress.js` sweeps stale progress files (host cron: weekly)
+- `scripts/cleanup_startup.sh` validates leftover upload dirs at host boot (legacy, host-side)
+- External `/mnt/external/skating_videos/` mount **removed** — files no longer leave Docker

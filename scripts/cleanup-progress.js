@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 const fs = require("fs");
 const path = require("path");
-const PROGRESS_DIR = path.join(__dirname, "..", "public", "uploads", "progress");
+const DATA_ROOT = process.env.DATA_DIR || path.join(__dirname, "..", "data");
+const PROGRESS_DIR = path.join(DATA_ROOT, "progress");
 
 try {
   const files = fs.readdirSync(PROGRESS_DIR);

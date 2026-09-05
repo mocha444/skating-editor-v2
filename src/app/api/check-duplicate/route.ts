@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
 import { readdir, readFile } from "fs/promises";
 import path from "path";
-
-const UPLOADS_DIR = path.join(process.cwd(), "public", "uploads");
+import { UPLOADS_DIR } from "@/lib/storage";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);

@@ -1,31 +1,23 @@
-# Stage 1: Dependencies
-FROM node:24-alpine AS deps
-RUN apk add --no-cache python3 py3-pip ffmpeg vips-dev sqlite-libs
-RUN pip3 install --break-system-packages opencv-python-headless numpy 2>/dev/null || true
+FROM node:24-slim
+
 WORKDIR /app
-COPY package*.json ./
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-pip ffmpeg libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --break-system-packages --no-cache-dir opencv-python-headless numpy \
+    && useradd -m node || true
+
+COPY package*.json tsconfig.json ./
 RUN npm ci
 
-# Stage 2: Build
-FROM node:24-alpine AS builder
-RUN apk add --no-cache python3 py3-pip ffmpeg vips-dev
-RUN pip3 install --break-system-packages opencv-python-headless numpy 2>/dev/null || true
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+RUN mkdir -p /app/data
+RUN chown node:node /app/data
+ENV NODE_ENV=production
+ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-# Stage 3: Runtime
-FROM node:24-alpine AS runner
-RUN apk add --no-cache python3 py3-pip ffmpeg vips sqlite-libs
-RUN pip3 install --break-system-packages opencv-python-headless numpy 2>/dev/null || true
-WORKDIR /app
-ENV NODE_ENV=production
-COPY --from=builder /app/.next/standalone ./
-COPY --from=builder /app/.next/static ./.next/static
-COPY --from=builder /app/public ./public
-COPY scripts/ ./scripts/
-COPY docker/init-db.sql ./
-RUN mkdir -p public/uploads public/results public/uploads/progress
+USER node
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["npm", "start"]

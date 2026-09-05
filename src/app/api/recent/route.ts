@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 import { readdir, stat, readFile } from "fs/promises";
+import type { Dirent } from "fs";
 import path from "path";
 import { spawn } from "child_process";
-
-const UPLOADS_DIR = path.join(process.cwd(), "public", "uploads");
+import { UPLOADS_DIR } from "@/lib/storage";
 
 async function getDuration(inputPath: string): Promise<number | null> {
   return new Promise((resolve) => {
@@ -24,8 +24,14 @@ async function getDuration(inputPath: string): Promise<number | null> {
 }
 
 export async function GET() {
-  const entries = (await readdir(UPLOADS_DIR, { withFileTypes: true }))
-    .filter(d => d.isDirectory() && d.name.startsWith("skate-") && !d.name.startsWith("skate-process"));
+  let entries: Dirent[] = [];
+  try {
+    entries = (await readdir(UPLOADS_DIR, { withFileTypes: true }))
+      .filter(d => d.isDirectory() && d.name.startsWith("skate-") && !d.name.startsWith("skate-process"));
+  } catch {
+    entries = [];
+  }
+  if (!entries.length) return NextResponse.json([]);
 
   const withMtime = await Promise.all(
     entries.map(async d => {

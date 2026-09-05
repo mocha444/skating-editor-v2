@@ -16,10 +16,11 @@ CREATE TABLE IF NOT EXISTS videos (
   original_name TEXT,
   file_size BIGINT,
   duration REAL,
-  uploaded_at TIMESTAMPTZ DEFAULT NOW(),
-  INDEX idx_videos_hash (hash),
-  INDEX idx_videos_user (user_id)
+  uploaded_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_videos_hash ON videos (hash);
+CREATE INDEX IF NOT EXISTS idx_videos_user ON videos (user_id);
 
 CREATE TABLE IF NOT EXISTS jobs (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -33,10 +34,11 @@ CREATE TABLE IF NOT EXISTS jobs (
   settings JSONB, -- threshold, minContour, etc.
   result JSONB, -- segments, duration, finalUrl, etc.
   started_at TIMESTAMPTZ DEFAULT NOW(),
-  finished_at TIMESTAMPTZ,
-  INDEX idx_jobs_status (status),
-  INDEX idx_jobs_video (video_id)
+  finished_at TIMESTAMPTZ
 );
+
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs (status);
+CREATE INDEX IF NOT EXISTS idx_jobs_video ON jobs (video_id);
 
 CREATE TABLE IF NOT EXISTS settings (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

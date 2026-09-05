@@ -2,7 +2,7 @@
 import { useState, useRef, useEffect } from "react";
 
 type Status = "idle" | "uploading" | "processing" | "done" | "error";
-type Result = { segments: number; duration: number; finalUrl: string; rawSegments: [number, number][] | [number, number, number][]; segUrls?: string[]; logs?: string[] };
+type Result = { jobId: string; segments: number; duration: number; finalUrl: string; rawSegments: [number, number][] | [number, number, number][]; segUrls?: string[]; logs?: string[] };
 
 export default function Page() {
   const [file, setFile] = useState<File | null>(null);
@@ -379,7 +379,7 @@ export default function Page() {
               src={result.finalUrl}
             />
             <a href={result.finalUrl} target="_blank" rel="noopener noreferrer" className="block text-center text-sm text-amber-400 hover:text-amber-300 underline">Open full assembled video →</a>
-            <a href={result.finalUrl} download={`skating_final.mp4`} className="block text-center text-sm bg-amber-400 text-neutral-950 font-bold px-4 py-1 rounded hover:bg-amber-300 transition-colors w-fit mx-auto mt-2">Download video</a>
+            <a href={`/api/download/${result.jobId}`} className="block text-center text-sm bg-amber-400 text-neutral-950 font-bold px-4 py-1 rounded hover:bg-amber-300 transition-colors w-fit mx-auto mt-2">Download video</a>
 
             {/* Segment breakdown */}
             <div className="mt-4 space-y-2">

@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { rm, stat } from "fs/promises";
 import path from "path";
+import { UPLOADS_DIR } from "@/lib/storage";
 
 export const runtime = "nodejs";
-const PROJECT_ROOT = process.cwd();
-const UPLOADS_DIR = path.join(PROJECT_ROOT, "public", "uploads");
 
 export async function POST(req: Request) {
   const form = await req.formData();

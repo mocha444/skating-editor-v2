@@ -7,9 +7,9 @@ services:
       - NODE_ENV=production
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://skating:skating@postgres:5432/skating
+      - DATA_DIR=/app/data
     volumes:
-      - /mnt/external/skating_videos/uploads:/app/public/uploads
-      - /mnt/external/skating_videos/results:/app/public/results
+      - media_data:/app/data
     depends_on:
       redis:
         condition: service_started
@@ -17,12 +17,37 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  worker:
+    build: .
+    command: ["npx", "tsx", "src/lib/video-worker.ts"]
+    environment:
+      - NODE_ENV=production
+      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=postgresql://skating:skating@postgres:5432/skating
+      - DATA_DIR=/app/data
+    volumes:
+      - media_data:/app/data
+      - .:/app
+    depends_on:
+      redis:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+
   redis:
     image: redis:7-alpine
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
   postgres:
@@ -35,6 +60,7 @@ services:
       - "5432:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
+      - ./docker/init-db.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U skating"]
       interval: 5s
@@ -45,3 +71,4 @@ services:
 volumes:
   redis_data:
   pg_data:
+  media_data:

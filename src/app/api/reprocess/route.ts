@@ -2,13 +2,13 @@ import { NextResponse } from "next/server";
 import { spawn } from "child_process";
 import { mkdir, writeFile, readFile } from "fs/promises";
 import path from "path";
-import { randomUUID, createHash } from "crypto";
+import { createHash } from "crypto";
+import { videoQueue } from "@/lib/bullmq-queue";
+import { db } from "@/lib/db";
+import { UPLOADS_DIR, RESULTS_DIR, PROGRESS_DIR, newJobId } from "@/lib/storage";
 
 export const runtime = "nodejs";
 const PROJECT_ROOT = process.cwd();
-const UPLOADS_DIR = path.join(PROJECT_ROOT, "public", "uploads");
-const RESULTS_DIR = path.join(PROJECT_ROOT, "public", "results");
-const PROGRESS_DIR = path.join(PROJECT_ROOT, "public", "uploads", "progress");
 
 function appendLog(id: string, line: string) {
   require("fs").appendFileSync(path.join(PROGRESS_DIR, id + ".log"), line + "\n");
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "invalid dir" }, { status: 400 });
   }
 
-  const jobId = randomUUID().slice(0, 8);
+  const jobId = newJobId();
   const inPath = path.join(UPLOADS_DIR, dir, "input.mp4");
   const segDir = path.join(UPLOADS_DIR, dir, "segments");
 
@@ -124,11 +124,58 @@ export async function POST(req: Request) {
         segUrls: segFiles.map((f, i) => `/uploads/${dir}/segments/seg-${i}.mp4`),
         hash: serverHash,
       }});
+      try {
+        const resultObj = {
+          ok: true,
+          segments: segments.length,
+          duration: segments.reduce((a: number, [s, e]: number[]) => a + (e - s), 0),
+          finalUrl: `/results/skating_final_${dir}.mp4`,
+          rawSegments: segments,
+          segUrls: segFiles.map((f, i) => `/uploads/${dir}/segments/seg-${i}.mp4`),
+          hash: serverHash,
+        };
+        await db.query(
+          `INSERT INTO jobs (job_id, status, percent, stage, result)
+           VALUES ($1, 'done', 100, 'done', $2::jsonb)
+           ON CONFLICT (job_id) DO UPDATE SET status = 'done', percent = 100, stage = 'done', result = $2::jsonb, finished_at = NOW()`,
+          [jobId, resultObj]
+        );
+        await db.query(`UPDATE videos SET duration = $1 WHERE dir = $2`, [resultObj.duration, dir]);
+      } catch (dbErr: any) {
+        console.error('[db] reprocess update error:', dbErr.message);
+      }
     } catch (e: any) {
       appendLog(jobId, `[error] ${e.message}`);
       writeMeta(jobId, { jobId, dir, status: "error", error: e.message, finished: Date.now() });
+      try {
+        await db.query(
+          `INSERT INTO jobs (job_id, status, error, finished_at)
+           VALUES ($1, 'error', $2, NOW())
+           ON CONFLICT (job_id) DO UPDATE SET status = 'error', error = $2, finished_at = NOW()`,
+          [jobId, e.message]
+        );
+      } catch {}
     }
   })();
 
+  await videoQueue.add('video-process', {
+    inPath, segDir, id: jobId, dir,
+    threshold: threshold || '0.003',
+    minContour: minContour || '50',
+    minMotionFrames: minMotionFrames || '8',
+    bufferFrames: bufferFrames || '60',
+    historyStr: historyStr || '300',
+    varThreshold: varThreshold || '25',
+    detectShadows: detectShadows || 'false',
+  }, { jobId });
+  try {
+    await db.query(
+      `INSERT INTO jobs (job_id, status, percent, stage) VALUES ($1, $2, $3, $4)
+       ON CONFLICT (job_id) DO UPDATE SET percent = $3, stage = $4`,
+      [jobId, 'running', 5, 'starting']
+    );
+  } catch (dbErr: any) {
+    console.error('[db] insert error:', dbErr.message);
+  }
   return NextResponse.json({ ok: true, jobId, dir });
 }
