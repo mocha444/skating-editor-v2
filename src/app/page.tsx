@@ -20,8 +20,13 @@ export default function Page() {
   const [history, setHistory] = useState(300);
   const [varThreshold, setVarThreshold] = useState(25);
   const [detectShadows, setDetectShadows] = useState(false);
+  const [recent, setRecent] = useState<{dir:string;url:string;date:string}[]>([]);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    fetch("/api/recent").then(r => r.json()).then(data => setRecent(data)).catch(() => {});
+  }, []);
 
   // Auto-scroll log panel
   useEffect(() => {
@@ -76,6 +81,25 @@ export default function Page() {
   return (
     <main className="min-h-screen bg-neutral-950 text-white p-6 flex flex-col items-center gap-6">
       <h1 className="text-5xl font-extrabold tracking-tight mt-4">Skating Editor</h1>
+
+      {/* Recent uploads */}
+      <div className="w-full max-w-2xl">
+        <h2 className="text-sm font-bold text-neutral-400 mb-2">Most Recent Uploads</h2>
+        {recent.length > 0 ? (
+          <div className="space-y-2">
+            {recent.map(r => (
+              <div key={r.dir} className="bg-neutral-900 border border-neutral-700 rounded-xl p-3 flex justify-between items-center">
+                <a href={r.url} target="_blank" rel="noopener noreferrer" className="text-amber-400 hover:text-amber-300 text-sm font-mono underline">
+                  {r.dir}
+                </a>
+                <span className="text-xs text-neutral-500">{r.date}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-neutral-500 text-sm">No uploads yet</p>
+        )}
+      </div>
 
       {/* Upload zone */}
       <div className="w-full max-w-2xl">
