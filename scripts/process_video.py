@@ -138,8 +138,4 @@ segments = [(round(s,2), round(e,2)) for s,e in merged if (e - s) > 0.5]
 total = sum(e - s for s, e in segments)
 print(f"[mog2+contour] {len(segments)} segs | {total:.1f}s total", file=sys.stderr)
 
-# Write progress for UI
-with open(os.path.join("/home/b/skating-editor-v2/public/uploads/progress", os.path.basename(video_path).replace(".","_") + ".json"), "w") as f:
-    f.write(json.dumps({"done": True, "count": len(segments), "step": "detect", "total": round(total, 2)}))
-
 print(json.dumps({"segments": segments, "count": len(segments)}))
