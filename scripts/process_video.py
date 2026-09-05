@@ -4,12 +4,33 @@ MOG2 + morphology + contour filtering — best-practice motion detection.
 Based on the proven pattern: learn background, clean mask, filter by contour size,
 require sustained motion to start/end a clip.
 """
-import cv2, sys, os, json
+import cv2, sys, os, json, argparse
 from collections import deque
 
 # --- Tunables ---
+import argparse
 video_path = sys.argv[1]
 output_dir = sys.argv[2] if len(sys.argv) > 2 else "/tmp/segments"
+
+# Parse command-line arguments
+parser = argparse.ArgumentParser()
+parser.add_argument('--threshold', type=float, default=0.003, help='motion threshold (fraction of frame)')
+parser.add_argument('--min-contour', type=int, default=50, help='minimum contour area')
+parser.add_argument('--min-motion-frames', type=int, default=8, help='sustained motion frames')
+parser.add_argument('--buffer-frames', type=int, default=60, help='pre/post-roll buffer in frames')
+parser.add_argument('--history', type=int, default=300, help='MOG2 history length')
+parser.add_argument('--var-threshold', type=int, default=25, help='MOG2 variance threshold')
+parser.add_argument('--detect-shadows', action='store_true', default=False, help='detect shadow pixels')
+args = parser.parse_args()
+
+# Map args to variables
+min_contour_area = args.min_contour
+motion_threshold = args.threshold
+min_motion_frames = args.min_motion_frames
+buffer_frames = args.buffer_frames
+history = args.history
+var_threshold = args.var_threshold
+detect_shadows = args.detect_shadows
 
 # --- Auto 720p proxy for 4K videos (huge speed boost on MOG2 + cutting) ---
 proxy_path = video_path.replace(".mp4", "_720p.mp4")

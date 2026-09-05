@@ -21,6 +21,19 @@ async function runWithLogs(cmd: string, args: string[]): Promise<{ out: string; 
 }
 
 export async function processLatest(): Promise<{ ok: boolean; jobId: string; dir?: string; segments?: number; duration?: number; finalUrl?: string; segUrls?: string[]; logs?: string[]; error?: string }> {
+  // Call the new function with no parameters for backward compatibility
+  return processLatestWithParams(null);
+}
+
+export async function processLatestWithParams(params: { 
+  threshold?: number; 
+  minContour?: number; 
+  minMotionFrames?: number; 
+  bufferFrames?: number; 
+  history?: number; 
+  varThreshold?: number; 
+  detectShadows?: boolean 
+} | null): Promise<{ ok: boolean; jobId: string; dir?: string; segments?: number; duration?: number; finalUrl?: string; segUrls?: string[]; logs?: string[]; error?: string }> {
   await mkdir(UPLOADS_DIR, { recursive: true });
   await mkdir(RESULTS_DIR, { recursive: true });
   await mkdir(PROGRESS_DIR, { recursive: true });
@@ -69,7 +82,18 @@ export async function processLatest(): Promise<{ ok: boolean; jobId: string; dir
   (async () => {
     try {
       await appendLog(`[job ${jobId}] starting on ${latestDir} (${((await stat(inPath)).size/1e6).toFixed(1)} MB)`);
-      const detect = await runWithLogs("python3", [path.join(PROJECT_ROOT, "scripts", "process_video.py"), inPath, segDir]);
+      
+      // Build args for Python script
+      const pyArgs = [path.join(PROJECT_ROOT, "scripts", "process_video.py"), inPath, segDir];
+      if (params?.threshold !== undefined) pyArgs.push("--threshold", params.threshold.toString());
+      if (params?.minContour !== undefined) pyArgs.push("--min-contour", params.minContour.toString());
+      if (params?.minMotionFrames !== undefined) pyArgs.push("--min-motion-frames", params.minMotionFrames.toString());
+      if (params?.bufferFrames !== undefined) pyArgs.push("--buffer-frames", params.bufferFrames.toString());
+      if (params?.history !== undefined) pyArgs.push("--history", params.history.toString());
+      if (params?.varThreshold !== undefined) pyArgs.push("--var-threshold", params.varThreshold.toString());
+      if (params?.detectShadows === true) pyArgs.push("--detect-shadows");
+      
+      const detect = await runWithLogs("python3", pyArgs);
       detect.err.split("\n").filter(Boolean).forEach(l => appendLog(`[mog2] ${l.trim()}`));
       const { segments } = JSON.parse(detect.out);
       if (!segments || !segments.length) throw new Error("no motion detected");

@@ -28,6 +28,13 @@ export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const file = formData.get("video") as File | null;
   const clientHash = formData.get("hash") as string | null;
+  const threshold = formData.get("threshold") as string | null;
+  const minContour = formData.get("min-contour") as string | null;
+  const minMotionFrames = formData.get("min-motion-frames") as string | null;
+  const bufferFrames = formData.get("buffer-frames") as string | null;
+  const history = formData.get("history") as string | null;
+  const varThreshold = formData.get("var-threshold") as string | null;
+  const detectShadows = formData.get("detect-shadows") as string | null;
   if (!file) return NextResponse.json({ error: "no file" }, { status: 400 });
   console.log("[upload] received:", file.name, "| size:", file.size, "| hash:", clientHash);
 
@@ -78,10 +85,15 @@ export async function POST(req: NextRequest) {
   }
 
   // 1) Detect motion via Python/OpenCV
-  const detectOut = await run("python3", [
-    path.join(PROJECT_ROOT, "scripts", "process_video.py"),
-    inPath, segDir,
-  ]);
+  const detectArgs = [path.join(PROJECT_ROOT, "scripts", "process_video.py"), inPath, segDir];
+  if (threshold) detectArgs.push("--threshold", threshold);
+  if (minContour) detectArgs.push("--min-contour", minContour);
+  if (minMotionFrames) detectArgs.push("--min-motion-frames", minMotionFrames);
+  if (bufferFrames) detectArgs.push("--buffer-frames", bufferFrames);
+  if (history) detectArgs.push("--history", history);
+  if (varThreshold) detectArgs.push("--var-threshold", varThreshold);
+  if (detectShadows === "true") detectArgs.push("--detect-shadows");
+  const detectOut = await run("python3", detectArgs);
   const { segments } = JSON.parse(detectOut);
 
   if (!segments.length) {
