@@ -24,6 +24,16 @@ async function run(cmd: string, args: string[]): Promise<string> {
   });
 }
 
+async function computeFileHash(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("md5");
+    const stream = createReadStream(filePath);
+    stream.on("data", d => hash.update(d));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
+  });
+}
+
 export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const file = formData.get("video") as File | null;
@@ -85,13 +95,16 @@ export async function POST(req: NextRequest) {
   }
 
   // 1) Detect motion via Python/OpenCV
+  // Server-side MD5 hash — always compute and store (more reliable than client hash)
+  const serverHash = await computeFileHash(inPath);
+  await writeFile(path.join(workDir, "hash.md5"), serverHash, "utf8");
   const detectArgs = [path.join(PROJECT_ROOT, "scripts", "process_video.py"), inPath, segDir];
-  if (threshold) detectArgs.push("--threshold", threshold);
-  if (minContour) detectArgs.push("--min-contour", minContour);
-  if (minMotionFrames) detectArgs.push("--min-motion-frames", minMotionFrames);
-  if (bufferFrames) detectArgs.push("--buffer-frames", bufferFrames);
-  if (history) detectArgs.push("--history", history);
-  if (varThreshold) detectArgs.push("--var-threshold", varThreshold);
+  detectArgs.push("--threshold", threshold);
+  detectArgs.push("--min-contour", minContour);
+  detectArgs.push("--min-motion-frames", minMotionFrames);
+  detectArgs.push("--buffer-frames", bufferFrames);
+  detectArgs.push("--history", history);
+  detectArgs.push("--var-threshold", varThreshold);
   if (detectShadows === "true") detectArgs.push("--detect-shadows");
   const detectOut = await run("python3", detectArgs);
   const { segments } = JSON.parse(detectOut);

@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import { spawn } from "child_process";
 import { mkdir, writeFile, readFile, readdir, stat } from "fs/promises";
+import { createReadStream } from "fs";
 import path from "path";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 
 export const runtime = "nodejs";
 const PROJECT_ROOT = process.cwd();
@@ -16,6 +17,16 @@ async function run(cmd: string, args: string[]): Promise<string> {
     p.stdout.on("data", d => (out += d.toString()));
     p.stderr.on("data", d => (err += d.toString()));
     p.on("close", code => code === 0 ? resolve(out) : reject(new Error(`${cmd} failed: ${err}`)));
+  });
+}
+
+async function computeFileHash(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = createHash("md5");
+    const stream = createReadStream(filePath);
+    stream.on("data", d => hash.update(d));
+    stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("error", reject);
   });
 }
 
@@ -33,6 +44,16 @@ export async function POST(req: Request) {
   const inPath = path.join(UPLOADS_DIR, dir, "input.mp4");
   const segDir = path.join(UPLOADS_DIR, dir, "segments");
   await mkdir(segDir, { recursive: true });
+
+  // Ensure hash is stored (compute if missing)
+  const hashPath = path.join(UPLOADS_DIR, dir, "hash.md5");
+  let serverHash: string;
+  try {
+    serverHash = (await readFile(hashPath, "utf8")).trim();
+  } catch {
+    serverHash = await computeFileHash(inPath);
+    await writeFile(hashPath, serverHash, "utf8");
+  }
 
   const detectArgs = [path.join(PROJECT_ROOT, "scripts", "process_video.py"), inPath, segDir];
   if (threshold) detectArgs.push("--threshold", threshold);
@@ -68,5 +89,6 @@ export async function POST(req: Request) {
     finalUrl: `/results/skating_final_${dir}.mp4`,
     rawSegments: segments,
     segUrls: segFiles.map((f, i) => `/uploads/${dir}/segments/seg-${i}.mp4`),
+    hash: serverHash,
   });
 }
