@@ -168,7 +168,7 @@ starts, ends, frames_read, rc, err_tail = [], [], 0, 1, ""
 commands = [build_ffmpeg_cmd(True)] if GPU_AVAILABLE else []
 commands.append(build_ffmpeg_cmd(False))
 
-for use_gpu, cmd in zip([True] if GPU_AVAILABLE else [False], commands):
+for use_gpu, cmd in zip([True, False] if GPU_AVAILABLE else [False], commands):
     if not use_gpu:
         print("[gpu] /dev/dri/renderD128 not available — CPU decode", file=sys.stderr)
     starts, ends, frames_read, rc, err_tail = run_detection(cmd, use_gpu)
