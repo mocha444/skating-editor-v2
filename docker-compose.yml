@@ -42,6 +42,17 @@ services:
     deploy:
       replicas: 1
 
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "192.168.1.241:443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/certs:/certs:ro
+    depends_on:
+      - app
+    restart: unless-stopped
+
   redis:
     image: redis:7-alpine
     ports:

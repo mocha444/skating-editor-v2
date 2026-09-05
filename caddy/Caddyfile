@@ -1,0 +1,27 @@
+# Skating Editor — TLS termination for the LAN PWA.
+# Cert: mkcert, valid for https://192.168.1.241 (and localhost).
+# Client devices must trust caddy/certs/rootCA.pem for the PWA's service
+# worker to register (a secure context).
+
+# Explicit `:443` default server: serves the cert for both SNI and
+# SNI-less ClientHellos (curl omits SNI for IP-address hosts).
+:443 {
+	tls /certs/site.pem /certs/site-key.pem
+
+	# Compress text, never the (GB-scale) user videos or API streams.
+	@nocompress not path /api/* /results/* /uploads/* /icon-*.png /apple-touch-icon.png
+	encode @nocompress zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+	}
+
+	reverse_proxy app:3000
+
+	log {
+		output stdout
+	}
+}
