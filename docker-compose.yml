@@ -1,5 +1,7 @@
 services:
   app:
+    env_file:
+      - .env
     build:
       context: .
       args:
@@ -25,6 +27,8 @@ services:
     restart: unless-stopped
 
   worker:
+    env_file:
+      - .env
     build: .
     mem_limit: 2g
     memswap_limit: 2g
@@ -52,6 +56,8 @@ services:
       replicas: 1
 
   cloudflared:
+    env_file:
+      - .env
     image: cloudflare/cloudflared:latest
     restart: unless-stopped
     network_mode: host
