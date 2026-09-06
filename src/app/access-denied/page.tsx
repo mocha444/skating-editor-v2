@@ -55,11 +55,18 @@ export default function AccessDeniedPage() {
 
     const body = encodeURIComponent(details);
 
-    window.open(
-      `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`,
-      "_blank",
-      "noopener,noreferrer",
-    );
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const mailto = `mailto:invites@skating.swerv.online?subject=${subject}&body=${body}`;
+
+    if (isMobile) {
+      window.location.href = mailto;
+    } else {
+      window.open(
+        `https://mail.google.com/mail/?view=cm&fs=1&to=${to}&su=${subject}&body=${body}`,
+        "_blank",
+        "noopener,noreferrer",
+      );
+    }
 
     setSentHint(true);
     setTimeout(() => setSentHint(false), 4000);
