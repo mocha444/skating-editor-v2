@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 type Props = {
   result: Result;
   confirmReset: boolean;
+  hasRecentUpload: boolean;
   onDownload: () => void;
   onContinueDelete: () => void;
   onCancelReset: () => void;
@@ -21,6 +22,7 @@ function fmt(s?: number) {
 export function ResultCard({
   result,
   confirmReset,
+  hasRecentUpload,
   onDownload,
   onContinueDelete,
   onCancelReset,
@@ -88,33 +90,49 @@ export function ResultCard({
       {confirmReset && (
         <div
           role="alertdialog"
-          aria-label="Download warning"
+          aria-label="Warning"
           className="mx-auto w-full max-w-lg rounded-xl border border-amber-700/60 bg-amber-950/50 px-5 py-4 text-center"
         >
-          <p className="mb-1 flex items-center justify-center gap-2 text-sm font-bold text-amber-200">
-            <AlertTriangle className="size-4" aria-hidden />
-            Download your finished video first
-          </p>
-          <p className="mb-4 text-xs text-amber-100/80">
-            You haven&apos;t downloaded the completed video yet. Starting a new processing job will{" "}
-            <span className="font-bold text-amber-300">permanently delete</span> it. We recommend
-            downloading it first.
-          </p>
+          {hasRecentUpload ? (
+            <>
+              <p className="mb-1 flex items-center justify-center gap-2 text-sm font-bold text-amber-200">
+                <AlertTriangle className="size-4" aria-hidden />
+                Delete your upload first
+              </p>
+              <p className="mb-4 text-xs text-amber-100/80">
+                You have an upload in recent. Delete it before processing another video.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="mb-1 flex items-center justify-center gap-2 text-sm font-bold text-amber-200">
+                <AlertTriangle className="size-4" aria-hidden />
+                Download your finished video first
+              </p>
+              <p className="mb-4 text-xs text-amber-100/80">
+                You haven&apos;t downloaded the completed video yet. Starting a new processing job will{" "}
+                <span className="font-bold text-amber-300">permanently delete</span> it. We recommend
+                downloading it first.
+              </p>
+            </>
+          )}
           <div className="flex flex-col items-center gap-3">
-            <a
-              href={downloadUrl}
-              onClick={onDownload}
-              className={cn(buttonVariants({ variant: "default" }))}
-            >
-              <Download aria-hidden />
-              Download video
-            </a>
+            {!hasRecentUpload && (
+              <a
+                href={downloadUrl}
+                onClick={onDownload}
+                className={cn(buttonVariants({ variant: "default" }))}
+              >
+                <Download aria-hidden />
+                Download video
+              </a>
+            )}
             <div className="flex gap-3">
               <button
                 onClick={onContinueDelete}
                 className="text-xs text-amber-300 underline hover:text-amber-200"
               >
-                Continue anyway, delete it
+                {hasRecentUpload ? "Delete upload & continue" : "Continue anyway, delete it"}
               </button>
               <button
                 onClick={onCancelReset}

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
+import { Show, SignInButton, SignUpButton, UserButton } from "@clerk/nextjs";
 import { UploadZone } from "@/components/upload-zone";
 import { RecentList } from "@/components/recent-list";
 import { ProgressPanel } from "@/components/progress-panel";
@@ -258,14 +259,27 @@ export default function Page() {
       setConfirmReset(true);
       return;
     }
+    if (recent.length > 0) {
+      setConfirmReset(true);
+      return;
+    }
     resetState();
   }
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-6 px-4 py-8 pb-20 sm:px-6">
-      <header className="mt-2 flex items-center justify-center gap-3">
+      <header className="relative mt-2 flex items-center justify-center gap-3">
         <Camera className="size-8 text-amber-400" aria-hidden />
         <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Skating Editor</h1>
+        <div className="absolute right-0 flex items-center gap-2">
+          <Show when="signed-out">
+            <SignInButton />
+            <SignUpButton />
+          </Show>
+          <Show when="signed-in">
+            <UserButton />
+          </Show>
+        </div>
       </header>
 
       {recent.length > 0 && (
@@ -335,9 +349,16 @@ export default function Page() {
           result={result}
           confirmReset={confirmReset}
           onDownload={onDownload}
-          onContinueDelete={resetState}
+          onContinueDelete={async () => {
+            if (recent.length > 0) {
+              await deleteRecent(recent[0].dir);
+              refreshRecent();
+            }
+            resetState();
+          }}
           onCancelReset={() => setConfirmReset(false)}
           onProcessAnother={onProcessAnother}
+          hasRecentUpload={recent.length > 0}
         />
       )}
     </main>

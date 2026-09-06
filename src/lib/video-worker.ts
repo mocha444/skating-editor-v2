@@ -8,7 +8,7 @@ import { RESULTS_DIR, PROGRESS_DIR } from './storage';
 import { db } from './db';
 
 const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-const redis = new IORedis(redisUrl, { maxRetriesPerRequest: null });
+const redis = new IORedis(redisUrl, { maxRetriesPerRequest: null, lazyConnect: true });
 
 function writeProgress(id: string, percent: number, stage: string) {
   const metaPath = path.join(PROGRESS_DIR, id + ".json");
@@ -74,9 +74,38 @@ const worker = new Worker('video-process', async (job: Job) => {
     writeProgress(id, 60 + Math.round((20 * (i + 1)) / segments.length), "cutting");
     const f = path.join(segDir, `seg-${i}.mp4`);
     appendLog(id, `[cut] ${i + 1}/${segments.length} ${s.toFixed(2)}s → ${e.toFixed(2)}s`);
+
+    // Trim with re-encoding to ensure frame-accurate cuts and audio sync.
+    // -ss BEFORE -i = fast seek (keyframe-aligned input, then re-encode from there)
+    // -vaapi_device + -hwaccel vaapi = GPU-accelerated decode when available
+    // -c:v h264_vaapi for encode = offload H.264 encode to iGPU (saves CPU)
     await new Promise((res, rej) => {
-      const cut = spawn("ffmpeg", ["-y", "-ss", String(s), "-i", inPath, "-t", String(e - s), "-c", "copy", f]);
-      cut.on("close", c => c === 0 ? res(true) : rej(new Error("ffmpeg cut failed")));
+      const cut = spawn("ffmpeg", [
+        "-y",
+        "-hwaccel", "vaapi",
+        "-hwaccel_device", "/dev/dri/renderD128",
+        "-hwaccel_output_format", "vaapi",
+        "-ss", String(s),
+        "-i", inPath,
+        "-t", String(e - s),
+        "-c:v", "h264_vaapi",
+        "-preset", "ultrafast",
+        "-crf", "18",
+        "-threads", "1",
+        "-c:a", "aac",
+        "-b:a", "192k",
+        "-movflags", "+faststart",
+        f,
+      ]);
+      let err = "";
+      cut.stderr.on("data", d => { err += d.toString(); });
+      cut.on("close", c => {
+        if (c === 0) res(true);
+        else {
+          appendLog(id, `[cut] ffmpeg error: ${err.slice(-300)}`);
+          rej(new Error("ffmpeg cut failed: " + err.slice(-200)));
+        }
+      });
     });
     segFiles.push(f);
   }
@@ -85,9 +114,30 @@ const worker = new Worker('video-process', async (job: Job) => {
   const listPath = path.join(path.dirname(segDir), "list.txt");
   await writeFile(listPath, segFiles.map(f => `file '${f}'`).join("\n"));
   const finalPath = path.join(RESULTS_DIR, `skating_final_${id}.mp4`);
+  // Concat re-encode uses libx264 (segments may have different GOPs from vaapi cuts)
   await new Promise((res, rej) => {
-    const concat = spawn("ffmpeg", ["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", finalPath]);
-    concat.on("close", c => c === 0 ? res(true) : rej(new Error("ffmpeg concat failed")));
+    const concat = spawn("ffmpeg", [
+      "-y",
+      "-f", "concat",
+      "-safe", "0",
+      "-i", listPath,
+      "-c:v", "libx264",
+      "-preset", "ultrafast",
+      "-crf", "18",
+      "-c:a", "aac",
+      "-b:a", "192k",
+      "-movflags", "+faststart",
+      finalPath,
+    ]);
+    let err = "";
+    concat.stderr.on("data", d => { err += d.toString(); });
+    concat.on("close", c => {
+      if (c === 0) res(true);
+      else {
+        appendLog(id, `[concat] ffmpeg error: ${err.slice(-300)}`);
+        rej(new Error("ffmpeg concat failed: " + err.slice(-200)));
+      }
+    });
   });
   appendLog(id, "[concat] Done!");
   writeProgress(id, 100, "done");
@@ -127,7 +177,10 @@ const worker = new Worker('video-process', async (job: Job) => {
   return result;
 }, {
   connection: redis,
-  concurrency: 1,
+  concurrency: 5, // 5 concurrent jobs (1 GPU + 4 CPU fallback); 4-core N95
+  limiter: { max: 5, duration: 1000 }, // throttle: 5 jobs/sec max
+  removeOnComplete: { age: 3600, count: 100 }, // keep last 100 completed jobs
+  removeOnFail: { age: 86400 }, // keep failed jobs for 24h for debugging
 });
 
 worker.on('completed', (job) => console.log(`[worker] Job ${job.id} completed`));

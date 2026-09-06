@@ -1,7 +1,8 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { mkdir } from "fs/promises";
 import path from "path";
-import { videoQueue, countActiveJobs, tryLockSingleFlight, releaseSingleFlight } from "@/lib/bullmq-queue";
+import { videoQueue, countActiveJobs, tryLockSingleFlight, releaseSingleFlight, getJobPriority } from "@/lib/bullmq-queue";
 import { db } from "@/lib/db";
 import { UPLOADS_DIR, PROGRESS_DIR, newJobId } from "@/lib/storage";
 
@@ -12,6 +13,7 @@ function writeMeta(id: string, data: object) {
 }
 
 export async function POST(req: Request) {
+  await auth.protect();
   const form = await req.formData();
   const dir = form.get("dir") as string;
   const threshold = form.get("threshold") as string;
@@ -42,6 +44,7 @@ export async function POST(req: Request) {
     await mkdir(segDir, { recursive: true });
     writeMeta(jobId, { jobId, dir, status: "running", started: Date.now(), percent: 5, stage: "starting" });
 
+    const priority = await getJobPriority();
     await videoQueue.add('video-process', {
       inPath, segDir, id: jobId, dir,
       threshold: threshold || '0.003',
@@ -51,7 +54,7 @@ export async function POST(req: Request) {
       historyStr: historyStr || '300',
       varThreshold: varThreshold || '25',
       detectShadows: detectShadows || 'false',
-    }, { jobId });
+    }, { jobId, priority });
     try {
       await db.query(
         `INSERT INTO jobs (job_id, status, percent, stage) VALUES ($1, $2, $3, $4)

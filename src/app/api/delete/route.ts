@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { rm, stat } from "fs/promises";
 import path from "path";
@@ -6,6 +7,7 @@ import { UPLOADS_DIR } from "@/lib/storage";
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  await auth.protect();
   const form = await req.formData();
   const dir = form.get("dir") as string;
   if (!dir || dir.includes("..") || dir.includes("/")) {

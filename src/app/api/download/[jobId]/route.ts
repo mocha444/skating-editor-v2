@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest } from "next/server";
 import path from "node:path";
 import { readFile, rm } from "node:fs/promises";
@@ -11,6 +12,7 @@ const JOBID_RE = /^[0-9a-zA-Z]{6,16}$/;
 const DIR_RE = /^skate-[0-9a-f]{6,16}$/i;
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ jobId: string }> }) {
+  await auth.protect();
   const { jobId } = await params;
   if (!JOBID_RE.test(jobId)) return new Response("Not Found", { status: 404 });
 

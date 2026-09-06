@@ -1,6 +1,11 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+    mem_limit: 2g
+    memswap_limit: 2g
     ports:
       - "3001:3000"
     environment:
@@ -8,6 +13,8 @@ services:
       - REDIS_URL=redis://redis:6379
       - DATABASE_URL=postgresql://skating:skating@postgres:5432/skating
       - DATA_DIR=/app/data
+      - CLERK_SECRET_KEY=${CLERK_SECRET_KEY}
+      - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
     volumes:
       - media_data:/app/data
     depends_on:
@@ -19,6 +26,8 @@ services:
 
   worker:
     build: .
+    mem_limit: 2g
+    memswap_limit: 2g
     command: ["npx", "tsx", "src/lib/video-worker.ts"]
     environment:
       - NODE_ENV=production
@@ -42,16 +51,11 @@ services:
     deploy:
       replicas: 1
 
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "192.168.1.241:443:443"
-    volumes:
-      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./caddy/certs:/certs:ro
-    depends_on:
-      - app
+  cloudflared:
+    image: cloudflare/cloudflared:latest
     restart: unless-stopped
+    network_mode: host
+    command: tunnel --no-autoupdate run --token ${TUNNEL_TOKEN}
 
   redis:
     image: redis:7-alpine

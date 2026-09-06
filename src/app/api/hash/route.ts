@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import busboy from "busboy";
 import { Readable } from "stream";
@@ -7,6 +8,7 @@ import type { ReadableStream as WebReadableStream } from "stream/web";
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
+  await auth.protect();
   const contentType = req.headers.get("content-type") || "";
   if (!contentType.startsWith("multipart/form-data")) {
     return NextResponse.json({ error: "expected multipart/form-data" }, { status: 400 });

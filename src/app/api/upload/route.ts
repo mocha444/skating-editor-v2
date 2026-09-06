@@ -1,3 +1,4 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
 import busboy from "busboy";
@@ -15,7 +16,8 @@ import {
 import type { ReadableStream as WebReadableStream } from "stream/web";
 import type { Dirent } from "fs";
 import path from "path";
-import { videoQueue, countActiveJobs, tryLockSingleFlight, releaseSingleFlight } from "@/lib/bullmq-queue";
+import { videoQueue, countActiveJobs, tryLockSingleFlight, releaseSingleFlight, getJobPriority } from "@/lib/bullmq-queue";
+import { checkByteRateLimit, updateByteRateLimit, MAX_UPLOAD_BYTES_PER_SECOND } from "@/lib/bullmq-queue";
 import { db } from "@/lib/db";
 import { UPLOADS_DIR, RESULTS_DIR, PROGRESS_DIR, newJobId } from "@/lib/storage";
 
@@ -69,9 +71,11 @@ function cleanupDir(dir: string, id: string) {
 }
 
 export async function POST(req: NextRequest) {
+  await auth.protect();
   if (!(await tryLockSingleFlight())) {
     return NextResponse.json({ ok: false, error: "Another video is already being uploaded or processed. Please wait for it to finish." }, { status: 409 });
   }
+
   try {
     // Fast-fail while another job is still processing
     if ((await countActiveJobs()) > 0) {
@@ -82,6 +86,9 @@ export async function POST(req: NextRequest) {
     if (!contentType.startsWith("multipart/form-data")) {
       return NextResponse.json({ error: "expected multipart/form-data" }, { status: 400 });
     }
+
+    // Extract IP for rate limiting (x-forwarded-for is set by Caddy reverse proxy)
+    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "anon";
 
     const bb = busboy({ headers: { "content-type": contentType } });
 
@@ -194,7 +201,19 @@ export async function POST(req: NextRequest) {
     appendLog(id, `[hash] ${serverHash}`);
     writeProgress(id, 25, "hash_computed");
 
-    // Submit to BullMQ
+    // Per-user byte-rate limit (5 MB/s rolling 60s window)
+    // Rate key uses client IP from Caddy reverse proxy
+    const userKey = clientIp;
+    const rateCheck = await checkByteRateLimit(userKey);
+    if (!rateCheck.allowed) {
+      return NextResponse.json({ ok: false, error: `Rate limit exceeded (${MAX_UPLOAD_BYTES_PER_SECOND / (1024*1024)}MB/s). Retry in ${rateCheck.resetIn}s.`, retryIn: rateCheck.resetIn }, { status: 429 });
+    }
+
+    // Update byte usage after upload (before queue submit)
+    await updateByteRateLimit(userKey, fileSize);
+
+    // Submit to BullMQ with priority based on system load
+    const priority = await getJobPriority();
     try {
       await videoQueue.add("video-process", {
         inPath, segDir, id, dir: `skate-${id}`,
@@ -205,7 +224,7 @@ export async function POST(req: NextRequest) {
         historyStr: fields["history"] || "300",
         varThreshold: fields["var-threshold"] || "25",
         detectShadows: fields["detect-shadows"] || "false",
-      }, { jobId: id });
+      }, { jobId: id, priority });
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error("[upload] queue add error:", msg);
@@ -213,16 +232,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 500 });
     }
 
-    // Persist to Postgres
+    // Persist to Postgres — link to Clerk user
     try {
-      await db.query(
-        `INSERT INTO videos (dir, hash, original_name, file_size) VALUES ($1, $2, $3, $4) ON CONFLICT (dir) DO NOTHING`,
-        [`skate-${id}`, serverHash, fileName, fileSize]
-      );
-      await db.query(
-        `INSERT INTO jobs (job_id, status, percent, stage) VALUES ($1, $2, $3, $4) ON CONFLICT (job_id) DO UPDATE SET percent = $3, stage = $4`,
-        [id, "running", 25, "hash_computed"]
-      );
+      const { userId: clerkId } = await auth();
+      if (clerkId) {
+        await db.query(
+          `INSERT INTO users (clerk_id) VALUES ($1) ON CONFLICT (clerk_id) DO NOTHING`,
+          [clerkId]
+        );
+        const userRes = await db.query("SELECT id FROM users WHERE clerk_id = $1", [clerkId]);
+        const userId = userRes.rows[0]?.id;
+        if (userId) {
+          await db.query(
+            `INSERT INTO videos (dir, hash, original_name, file_size, user_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (dir) DO UPDATE SET user_id = $5`,
+            [`skate-${id}`, serverHash, fileName, fileSize, userId]
+          );
+          await db.query(
+            `INSERT INTO jobs (job_id, status, percent, stage, user_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (job_id) DO UPDATE SET percent = $3, stage = $4, user_id = $5`,
+            [id, "running", 25, "hash_computed", userId]
+          );
+        } else {
+          // Fallback without user
+          await db.query(
+            `INSERT INTO videos (dir, hash, original_name, file_size) VALUES ($1, $2, $3, $4) ON CONFLICT (dir) DO NOTHING`,
+            [`skate-${id}`, serverHash, fileName, fileSize]
+          );
+          await db.query(
+            `INSERT INTO jobs (job_id, status, percent, stage) VALUES ($1, $2, $3, $4) ON CONFLICT (job_id) DO UPDATE SET percent = $3, stage = $4`,
+            [id, "running", 25, "hash_computed"]
+          );
+        }
+      } else {
+        await db.query(
+          `INSERT INTO videos (dir, hash, original_name, file_size) VALUES ($1, $2, $3, $4) ON CONFLICT (dir) DO NOTHING`,
+          [`skate-${id}`, serverHash, fileName, fileSize]
+        );
+        await db.query(
+          `INSERT INTO jobs (job_id, status, percent, stage) VALUES ($1, $2, $3, $4) ON CONFLICT (job_id) DO UPDATE SET percent = $3, stage = $4`,
+          [id, "running", 25, "hash_computed"]
+        );
+      }
     } catch (e: unknown) {
       console.error("[db] insert error:", e instanceof Error ? e.message : String(e));
     }

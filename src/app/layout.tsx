@@ -1,3 +1,4 @@
+import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -14,7 +15,8 @@ const geistMono = Geist_Mono({
 });
 
 const APP_NAME = "Skating Editor";
-const APP_DESCRIPTION = "Cut dead air out of your skating videos with MOG2 motion detection.";
+const APP_DESCRIPTION =
+  "Cut dead air out of your skating videos with MOG2 motion detection.";
 
 export const metadata: Metadata = {
   applicationName: APP_NAME,
@@ -45,12 +47,21 @@ export const viewport: Viewport = {
   themeColor: "#1c1c22",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}>
+    <html
+      lang="en"
+      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased dark`}
+    >
       <body className="min-h-full flex flex-col">
-        {children}
-        <SwRegister />
+        <ClerkProvider telemetry={false}>
+          {children}
+          <SwRegister />
+        </ClerkProvider>
       </body>
     </html>
   );

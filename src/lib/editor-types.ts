@@ -28,10 +28,10 @@ export type DetectionSettings = {
 };
 
 export const DEFAULT_SETTINGS: DetectionSettings = {
-  threshold: "0.003",
+  threshold: "0.0012",
   minContour: "50",
-  minMotionFrames: "8",
-  bufferFrames: "60",
+  minMotionFrames: "12",
+  bufferFrames: "20",
   history: "300",
   varThreshold: "25",
   detectShadows: "false",

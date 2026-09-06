@@ -1,9 +1,11 @@
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { readdir, readFile } from "fs/promises";
 import path from "path";
 import { UPLOADS_DIR } from "@/lib/storage";
 
 export async function GET(req: Request) {
+  await auth.protect();
   const { searchParams } = new URL(req.url);
   const hash = searchParams.get("hash") || "";
   if (!hash) return NextResponse.json({ duplicate: false });
