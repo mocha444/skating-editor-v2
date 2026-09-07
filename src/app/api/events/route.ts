@@ -1,11 +1,11 @@
 import { NextRequest } from "next/server";
-import { unwatchFile, watchFile } from "fs";
 import { readFile } from "fs/promises";
-import path from "path";
-import { PROGRESS_DIR } from "@/lib/storage";
+import { db } from "@/lib/jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const POLL_MS = 500;
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -14,9 +14,7 @@ export async function GET(req: NextRequest) {
     return new Response("bad jobId", { status: 400 });
   }
 
-  const metaPath = path.join(PROGRESS_DIR, jobId + ".json");
-  const logPath = path.join(PROGRESS_DIR, jobId + ".log");
-
+  const logPath = db.jobLogPath(jobId);
   const encoder = new TextEncoder();
   let closed = false;
   let logged = 0;
@@ -32,32 +30,33 @@ export async function GET(req: NextRequest) {
 
       const push = async () => {
         try {
-          let logs: string[] = [];
-          try {
-            logs = (await readFile(logPath, "utf8")).split("\n").filter(Boolean);
-          } catch {}
-          const meta = JSON.parse(await readFile(metaPath, "utf8"));
-          const fresh = logs.slice(logged);
-          if (fresh.length) send("log", fresh);
-          logged = logs.length;
-          send("progress", { percent: meta.percent || 0, stage: meta.stage || "", status: meta.status || "" });
+          const job = db.getJob(jobId);
+          if (!job) return;
 
-          if (meta.status === "done" || meta.status === "error") {
-            send("done", { status: meta.status, result: meta.result || null, error: meta.error || null });
+          let fresh: string[] = [];
+          try {
+            const all = (await readFile(logPath, "utf8")).split("\n").filter(Boolean);
+            fresh = all.slice(logged);
+            logged = all.length;
+          } catch {}
+
+          if (fresh.length) send("log", fresh);
+          send("progress", { percent: job.percent || 0, stage: job.stage || "", status: job.status || "" });
+
+          if (job.status === "done" || job.status === "error") {
+            send("done", { status: job.status, result: job.result || null, error: job.error || null });
             clearInterval(interval);
             controller.close();
           }
         } catch {}
       };
 
-      watchFile(metaPath, { interval: 400 }, push);
-      const interval = setInterval(push, 400);
+      const interval = setInterval(push, POLL_MS);
       push();
 
       req.signal.addEventListener("abort", () => {
         closed = true;
         clearInterval(interval);
-        try { unwatchFile(metaPath); } catch {}
         controller.close();
       });
     },

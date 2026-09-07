@@ -146,10 +146,7 @@ export default function Page() {
       setLogs([`Uploading ${file.name}…`]);
       setUpload(null);
 
-      const fd = new FormData();
-      fd.append("video", file, file.name);
-      appendSettings(fd, settings);
-      const { status: httpStatus, json } = await uploadFormData(fd, (p) => setUpload(p));
+      const { status: httpStatus, json } = await uploadFormData(file, settings, (p) => setUpload(p));
 
       // Server-side authoritative dedupe (hash computed during upload).
       if (json.duplicate) {

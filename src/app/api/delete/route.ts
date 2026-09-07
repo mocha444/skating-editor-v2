@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { rm } from "fs/promises";
 import path from "path";
-import { UPLOADS_DIR, PROGRESS_DIR, RESULTS_DIR } from "@/lib/storage";
-import { removeRecent } from "@/lib/store";
+import { UPLOADS_DIR, RESULTS_DIR } from "@/lib/storage";
+import { db } from "@/lib/jobs";
 
 export const runtime = "nodejs";
 
@@ -17,11 +17,10 @@ export async function POST(req: Request) {
   try {
     await Promise.all([
       rm(path.join(UPLOADS_DIR, dir), { recursive: true, force: true }),
-      rm(path.join(PROGRESS_DIR, id + ".json"), { force: true }),
-      rm(path.join(PROGRESS_DIR, id + ".log"), { force: true }),
       rm(path.join(RESULTS_DIR, `skating_final_${id}.mp4`), { force: true }),
-      removeRecent(dir),
     ]);
+    db.deleteJob(id);
+    db.removeRecent(dir);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "delete failed" }, { status: 500 });

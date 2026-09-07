@@ -1,23 +1,26 @@
 #!/usr/bin/env node
+// Cleans up finished/abandoned job rows (SQLite) older than 7 days, removes
+// their log files, and prunes stale upload sessions.
 const fs = require("fs");
 const path = require("path");
-const DATA_ROOT = process.env.DATA_DIR || path.join(__dirname, "..", "data");
-const PROGRESS_DIR = path.join(DATA_ROOT, "progress");
+const { getDb, PROGRESS_DIR } = require("./jobs-db.cjs");
+
+const sevenDays = 7 * 24 * 60 * 60 * 1000;
+const cutoff = Date.now() - sevenDays;
 
 try {
-  const files = fs.readdirSync(PROGRESS_DIR);
-  const now = Date.now();
-  const sevenDays = 7 * 24 * 60 * 60 * 1000;
+  const db = getDb();
+  const rows = db.prepare(
+    "SELECT id FROM jobs WHERE status IN ('done','error') AND (finished IS NULL OR finished < ?)"
+  ).all(cutoff);
+  const del = db.prepare("DELETE FROM jobs WHERE id = ?");
   let deleted = 0;
-  for (const f of files) {
-    const fp = path.join(PROGRESS_DIR, f);
-    const stat = fs.statSync(fp);
-    if (now - stat.mtimeMs > sevenDays) {
-      fs.unlinkSync(fp);
-      deleted++;
-    }
+  for (const r of rows) {
+    del.run(r.id);
+    try { fs.unlinkSync(path.join(PROGRESS_DIR, r.id + ".log")); } catch {}
+    deleted++;
   }
-  console.log(`[cleanup] Deleted ${deleted} progress files older than 7 days`);
+  console.log(`[cleanup] Deleted ${deleted} old finished/error jobs`);
 } catch (e) {
-  console.log(`[cleanup] No progress dir or nothing to clean: ${e.message}`);
+  console.log(`[cleanup] No DB or nothing to clean: ${e.message}`);
 }

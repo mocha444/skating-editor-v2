@@ -1,15 +1,17 @@
 import { NextResponse } from "next/server";
-import { listRecent } from "@/lib/store";
+import { db } from "@/lib/jobs";
+
+export const runtime = "nodejs";
 
 export async function GET() {
-  const entries = await listRecent();
+  const entries = db.listRecent();
   const results = entries.map((e) => ({
     dir: e.dir,
     url: `/uploads/${e.dir}/input.mp4`,
     date: new Date(e.uploadedAt).toLocaleString(),
     duration: e.duration,
     durationLabel: e.duration ? formatDuration(e.duration) : "—",
-    hash: e.hash.slice(0, 8),
+    hash: e.hash ? e.hash.slice(0, 8) : "",
   }));
   return NextResponse.json(results);
 }

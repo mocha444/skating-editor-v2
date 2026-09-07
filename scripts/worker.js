@@ -1,97 +1,50 @@
+"use strict";
+/**
+ * Job worker. Polls the SQLite job queue (scripts/jobs-db.cjs) with an atomic
+ * claim (dequeueJob), processes one job at a time, and writes progress/results
+ * back to the DB. Log lines stream to a per-job .log file consumed via SSE.
+ *
+ * Multiple workers (one per host, or scaled) claim distinct jobs safely thanks
+ * to the single shared DB on the volume. A worker crash mid-job leaves it
+ * 'running'; it is reclaimed after a lease timeout or on restart.
+ */
 const { spawn } = require("child_process");
 const fs = require("fs");
 const path = require("path");
 
-const PROJECT_ROOT = process.cwd();
-const DATA_DIR = process.env.DATA_DIR || path.join(PROJECT_ROOT, "data");
-const PROGRESS_DIR = path.join(DATA_DIR, "progress");
+const {
+  DATA_DIR,
+  PROGRESS_DIR,
+  RESULTS_DIR: _unused,
+  dequeueJob,
+  setJob,
+  completeJob,
+  failJob,
+  resetRunningJobs,
+  jobLogPath,
+  updateRecentDuration,
+} = require("./jobs-db.cjs");
 const RESULTS_DIR = path.join(DATA_DIR, "results");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
 
-function now() { return Date.now(); }
+function now() {
+  return Date.now();
+}
 
-function readMeta(id) {
-  try { return JSON.parse(fs.readFileSync(path.join(PROGRESS_DIR, id + ".json"), "utf8")); }
-  catch { return null; }
-}
-function writeMeta(id, data) {
-  fs.mkdirSync(PROGRESS_DIR, { recursive: true });
-  fs.writeFileSync(path.join(PROGRESS_DIR, id + ".json"), JSON.stringify(data));
-}
 function appendLog(id, line) {
-  const f = path.join(PROGRESS_DIR, id + ".log");
-  fs.appendFileSync(f, line + "\n");
+  try {
+    fs.appendFileSync(jobLogPath(id), line + "\n");
+  } catch {}
 }
 function update(id, patch) {
-  const m = readMeta(id);
-  if (m) writeMeta(id, { ...m, ...patch, lastUpdate: now() });
-}
-// --- atomic job claiming (prevents duplicate processing when >1 worker runs) ---
-function isProcessAlive(pid) {
-  try { process.kill(pid, 0); return true; } catch { return false; }
-}
-function lockPath(id) { return path.join(PROGRESS_DIR, id + ".lock"); }
-// Returns true if this worker owns the job lock (mkdir is atomic).
-function claim(id) {
-  const dir = lockPath(id);
   try {
-    fs.mkdirSync(dir);                 // fails if another worker already holds it
-    fs.writeFileSync(path.join(dir, "pid"), String(process.pid));
-    return true;
-  } catch {
-    // lock exists — steal it if the owner process is dead (crashed worker)
-    try {
-      const pid = parseInt(fs.readFileSync(path.join(dir, "pid"), "utf8"), 10);
-      if (!pid || !isProcessAlive(pid)) {
-        fs.rmSync(dir, { recursive: true, force: true });
-        return claim(id);
-      }
-    } catch {}
-    return false;
-  }
-}
-function release(id) {
-  fs.rmSync(lockPath(id), { recursive: true, force: true });
-}
-
-function updateRecent(dir, patch) {
-  if (!dir) return;
-  const f = path.join(DATA_DIR, "recent.json");
-  let list = [];
-  try { list = JSON.parse(fs.readFileSync(f, "utf8")); } catch {}
-  if (!Array.isArray(list)) list = [];
-  const next = list.map((e) => (e.dir === dir ? { ...e, ...patch } : e));
-  try {
-    fs.writeFileSync(f + ".tmp", JSON.stringify(next.slice(0, 30)));
-    fs.renameSync(f + ".tmp", f);
+    setJob(id, patch);
   } catch {}
 }
 
-function runPython(script, args, id) {
-  return new Promise((resolve, reject) => {
-    const p = spawn("python3", [script, ...args]);
-    let out = "", err = "";
-    p.stdout.on("data", d => out += d.toString());
-    p.stderr.on("data", d => { err += d.toString(); appendLog(id, `[mog2] ${d.toString().trim()}`); });
-    p.on("close", c => {
-      try { resolve(JSON.parse(out)); } catch { reject(new Error("detect parse: " + err.slice(-300))); }
-    });
-  });
-}
-
-function runFfmpeg(args, id, label) {
-  return new Promise((resolve, reject) => {
-    const p = spawn("ffmpeg", args);
-    let err = "";
-    p.stderr.on("data", d => err += d.toString());
-    p.on("close", c => {
-      if (c === 0) resolve();
-      else {
-        appendLog(id, `[${label}] ffmpeg error: ${err.slice(-300)}`);
-        reject(new Error(`ffmpeg ${label} failed: ` + err.slice(-200)));
-      }
-    });
-  });
+function mkdirSyncProject() {
+  fs.mkdirSync(PROGRESS_DIR, { recursive: true });
+  fs.mkdirSync(RESULTS_DIR, { recursive: true });
 }
 
 function ffprobeDuration(mediaPath) {
@@ -109,17 +62,52 @@ function ffprobeDuration(mediaPath) {
   });
 }
 
+function runPython(script, args, id) {
+  return new Promise((resolve, reject) => {
+    const p = spawn("python3", [script, ...args]);
+    let out = "", err = "";
+    p.stdout.on("data", d => out += d.toString());
+    p.stderr.on("data", d => { err += d.toString(); appendLog(id, `[mog2] ${d.toString().trim()}`); });
+    p.on("close", c => {
+      if (c === 0) {
+        try { resolve(JSON.parse(out)); }
+        catch (e) { reject(new Error("detect parse: " + err.slice(-300))); }
+      } else {
+        reject(new Error("detect failed rc=" + c + ": " + err.slice(-300)));
+      }
+    });
+    p.on("error", (e) => reject(new Error("python spawn: " + e.message)));
+  });
+}
+
+function runFfmpeg(args, id, label) {
+  return new Promise((resolve, reject) => {
+    const p = spawn("ffmpeg", args);
+    let err = "";
+    p.stdout.on("data", d => err += d.toString());
+    p.stderr.on("data", d => err += d.toString());
+    p.on("close", c => {
+      if (c === 0) resolve();
+      else {
+        appendLog(id, `[${label}] ffmpeg error: ${err.slice(-300)}`);
+        reject(new Error(`ffmpeg ${label} failed: ` + err.slice(-200)));
+      }
+    });
+    p.on("error", (e) => reject(new Error("ffmpeg spawn: " + e.message)));
+  });
+}
+
 async function processJob(job) {
-  const { id, threshold, minContour, minMotionFrames, bufferFrames, historyStr, varThreshold, detectShadows } = job;
-  // Resolve to ABSOLUTE paths: the ffmpeg concat demuxer resolves the file
-  // entries in list.txt relative to the list file's own directory, so a
-  // relative segDir would get double-prefixed (data/.../data/...).
-  const inPath = path.resolve(job.inPath);
-  const segDir = path.resolve(job.segDir);
+  const { id, threshold, minContour, minMotionFrames, bufferFrames, history, varThreshold, detectShadows } = job;
+  // Absolute paths already resolved at job-creation time; keep them so the
+  // ffmpeg concat demuxer (which resolves list entries relative to the list
+  // file's own dir) can't double-prefix a relative segDir.
+  const inPath = job.inPath;
+  const segDir = job.segDir;
   mkdirSyncProject();
   fs.mkdirSync(segDir, { recursive: true });
 
-  update(id, { status: "running", stage: "detect", percent: 30 });
+  update(id, { stage: "detect", percent: 30 });
   appendLog(id, "[mog2] starting motion detection...");
 
   const detectArgs = [inPath, segDir];
@@ -127,12 +115,12 @@ async function processJob(job) {
   detectArgs.push("--min-contour", minContour || "50");
   detectArgs.push("--min-motion-frames", minMotionFrames || "8");
   detectArgs.push("--buffer-frames", bufferFrames || "60");
-  detectArgs.push("--history", historyStr || "300");
+  detectArgs.push("--history", history || "300");
   detectArgs.push("--var-threshold", varThreshold || "25");
   detectArgs.push("--max-fps", "30");
   if (detectShadows === "true") detectArgs.push("--detect-shadows");
 
-  const parsed = await runPython(path.join(PROJECT_ROOT, "scripts", "process_video.py"), [...detectArgs], id);
+  const parsed = await runPython(path.join(__dirname, "process_video.py"), [...detectArgs], id);
   const segments = parsed.segments || [];
   if (!segments.length) throw new Error("no motion detected");
   update(id, { stage: "detect_done", percent: 60 });
@@ -156,12 +144,11 @@ async function processJob(job) {
   await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", finalPath], id, "concat");
   appendLog(id, "[concat] Done!");
 
-  // Report the REAL duration of the final file. `-c copy` snaps each cut to the
-  // nearest keyframe, so the concatenated output is usually longer than the
-  // nominal Σ(e−s) of the detections. Prefer the probed value so the count
-  // matches the downloadable video exactly.
+  // Report the REAL final-file duration (stream-copy snaps to keyframes, so it
+  // usually differs from the nominal sum of detections).
   const nominal = segments.reduce((a, [s, e]) => a + (e - s), 0);
   const duration = (await ffprobeDuration(finalPath)) ?? nominal;
+
   const result = {
     ok: true, jobId: id, segments: segments.length, duration,
     sourceDuration: typeof parsed.source_duration === "number" && parsed.source_duration > 0
@@ -171,55 +158,52 @@ async function processJob(job) {
     rawSegments: segments,
     segUrls: segFiles.map((f, i) => `/uploads/skate-${id}/segments/seg-${i}.mp4`),
   };
-  update(id, { status: "done", stage: "done", percent: 100, finished: now(), result });
-  updateRecent(job.dir || `skate-${id}`, { duration });
+  completeJob(id, result, now());
+  updateRecentDuration(job.dir || `skate-${id}`, duration);
   appendLog(id, "[done] Final video ready");
   appendLog(id, `[timing] Total elapsed: ${((now() - (job.started || now())) / 1000).toFixed(1)}s`);
 }
 
-function mkdirSyncProject() {
-  fs.mkdirSync(PROGRESS_DIR, { recursive: true });
-  fs.mkdirSync(RESULTS_DIR, { recursive: true });
+// Poll loop: claim one job, process it fully, then look for more.
+const POLL_MS = 1000;
+let processing = false;
+
+async function tick() {
+  if (processing) return;
+  let job;
+  try {
+    job = dequeueJob();
+  } catch (e) {
+    console.error("[worker] dequeue error", e && e.message);
+    job = null;
+  }
+  if (!job) return;
+  processing = true;
+  const id = job.id;
+  try {
+    console.log(`[worker] claimed ${id} (${job.originalName || job.dir})`);
+    await processJob(job);
+    console.log(`[worker] ${id} done`);
+  } catch (e) {
+    const msg = (e && e.message) || String(e);
+    console.error(`[worker] job ${id} failed: ${msg}`);
+    failJob(id, msg);
+    appendLog(id, `[error] ${msg}`);
+  } finally {
+    processing = false;
+  }
 }
 
-function main() {
+function start() {
   mkdirSyncProject();
   try {
-    for (const f of fs.readdirSync(PROGRESS_DIR).filter(x => x.endsWith(".json"))) {
-      const id = f.slice(0, -5);
-      const m = readMeta(id);
-      if (m && m.status === "running") { m.status = "pending"; m.stage = "queued"; writeMeta(id, m); }
-    }
-  } catch {}
-
-  console.log("[worker] watching directory for new jobs...");
-  const watch = fs.watch(PROGRESS_DIR, (event, filename) => {
-    if (filename && filename.endsWith(".json")) {
-      const id = filename.slice(0, -5);
-      const job = readMeta(id);
-      if (!job) return;
-      const isPending = job.status === "pending" || job.status === "queued";
-      const isNewRun = event === "rename" && isPending;
-      if (isNewRun || isPending) {
-        setTimeout(async () => {
-          const j = readMeta(id);
-          if (!j) return;
-          if (j.status !== "pending" && j.status !== "queued") return;
-          if (!claim(id)) return;      // another worker already owns this job
-          try {
-            await processJob(j);
-          } catch (e) {
-            console.error(`[worker] job ${id} failed`, e.message);
-            update(id, { status: "error", error: e.message, finished: now() });
-            appendLog(id, `[error] ${e.message}`);
-          } finally {
-            release(id);
-          }
-        }, 200);
-      }
-    }
-  });
-  watch.on("error", (e) => console.error("[worker] watch error", e));
+    resetRunningJobs(); // requeue anything from a previous crashed worker
+  } catch (e) {
+    console.error("[worker] reset error", e && e.message);
+  }
+  console.log(`[worker] watching SQLite queue at ${require("./jobs-db.cjs").DB_PATH}`);
+  setInterval(tick, POLL_MS);
+  tick();
 }
 
-main();
+start();
