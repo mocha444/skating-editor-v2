@@ -131,6 +131,7 @@ def run_detection(cmd, gpu: bool):
     clip_ends = []
     in_motion = False
     current_start = None
+    last_motion_frame = 0
     frame_idx = 0
     frames_read = 0
     err_tail = ""
@@ -157,6 +158,8 @@ def run_detection(cmd, gpu: bool):
             contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             motion_pixels = sum(cv2.contourArea(c) for c in contours if cv2.contourArea(c) > min_contour_area)
             has_motion = (motion_pixels / (W * H)) > motion_threshold
+            if has_motion:
+                last_motion_frame = frame_idx
             motion_history.append(has_motion)
 
             if not in_motion and sum(motion_history) >= min_motion_frames_eff:
@@ -180,6 +183,16 @@ def run_detection(cmd, gpu: bool):
         clip_ends.append(frames_read - 1)
         clip_starts.append(current_start)
     clip_ends = [min(e, frames_read - 1) for e in clip_ends]
+
+    # Trailing dead-air trim: a final segment that runs to EOF (motion still
+    # flagged on the last frames) would keep an action-free tail. Cap it at the
+    # last frame with real motion plus the post-roll buffer. A resulting empty
+    # tail segment is dropped later by the duration filter (>0.5s).
+    if clip_ends and last_motion_frame > 0:
+        max_end = min(frames_read - 1, last_motion_frame + buffer_frames_eff)
+        if clip_ends[-1] > max_end:
+            clip_ends[-1] = max_end
+
     return clip_starts, clip_ends, frames_read, proc.returncode, err_tail
 
 starts, ends, frames_read, rc, err_tail = [], [], 0, 1, ""

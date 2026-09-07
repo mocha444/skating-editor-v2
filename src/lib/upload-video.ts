@@ -1,3 +1,4 @@
+import SparkMD5 from "spark-md5";
 import type { DetectionSettings } from "@/lib/editor-types";
 
 export type UploadProgressSnapshot = {
@@ -35,7 +36,7 @@ export async function uploadFormData(
   settings: DetectionSettings,
   onProgress: (p: UploadProgressSnapshot) => void
 ): Promise<{ status: number; json: UploadResponse }> {
-  const uploadId = await uploadIdFor(file);
+  const uploadId = uploadIdFor(file);
   const chunkCount = Math.max(1, Math.ceil(file.size / CHUNK_SIZE));
 
   // Ask the server which chunks are already on disk (resume after a disconnect).
@@ -91,14 +92,12 @@ function chunkLength(file: File, index: number): number {
   return Math.min(CHUNK_SIZE, file.size - index * CHUNK_SIZE);
 }
 
-async function uploadIdFor(file: File): Promise<string> {
+// Stable id derived from the file's identity. Uses SparkMD5 (not crypto.subtle)
+// because crypto.subtle requires a secure context (HTTPS/localhost) and this app
+// is also served over a plain-HTTP LAN address.
+function uploadIdFor(file: File): string {
   const key = `${file.name}:${file.size}:${file.lastModified}`;
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(key));
-  const hex = Array.from(new Uint8Array(digest))
-    .slice(0, 12)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-  return "u" + hex;
+  return "u" + SparkMD5.hash(key).slice(0, 12);
 }
 
 function uploadChunk(file: File, uploadId: string, index: number, chunkCount: number): Promise<void> {
