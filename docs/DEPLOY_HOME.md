@@ -1,29 +1,39 @@
-# Self-Hosted + VPS Deployment (Home GPU + Cheap Front Door)
+# Skating Editor — Deployment: Hybrid (Home GPU + Cheap Cloud Box)
 
-**Goal:** a set-and-forget deployment that serves ~10 users for **~$13/mo**, hides your
-home IP, gives full-speed video serving (no Cloudflare throttle, no home-upload cap),
-and scales simply later. Heavy GPU processing runs free on your home PC; a small
-DigitalOcean droplet is the public front door + queue; Cloudflare R2 serves the
-finished videos for **$0 egress**.
+**Goal:** a set-and-forget deployment for ~5–10 users at **~$7–13/mo** that **feels fast
+(35× GPU)** and **never stalls if your home power/internet goes out.**
+
+## Recommended architecture (HYBRID)
+- **Home beast PC** = **primary worker**, using your **GPU (35× fast)** — free, and it's the
+  part that makes processing feel instant.
+- **A cheap cloud box (Hetzner ~$6 or DO ~$12/mo)** = hosts the **app + Postgres queue**
+  **and a CPU fallback worker**, so if home is down jobs still finish (just slower). It's
+  also the **public front door**, hiding your home IP.
+- **Cloudflare R2** serves the finished videos for **$0 egress** — full speed, no throttle,
+  no home-upload cap.
 
 ```
-visitor ──▶ yourdomain.com ──▶ DO droplet (Caddy + Next.js app + Postgres queue)
-                                      │  (WireGuard tunnel)
-                                      ▼
-                              home beast PC (worker: ffmpeg GPU decode + MOG2)
-                                      │  (uploads input, serves nothing)
-                                      ▼
-                              Cloudflare R2 (serves finals — free, full speed)
+        ┌─▶ home beast PC (GPU worker, 35×)  — fast when home is up
+ jobs ─┤
+        └─▶ cloud box      (CPU worker)      — automatic failover      
+
+visitor ─▶ yourdomain.com ─▶ cloud box (Caddy + app + queue + CPU worker)
+                                        ▲ hides home IP
+media served from Cloudflare R2 (free)
 ```
 
 **Monthly cost (start):**
 | Item | Purpose | ~$/mo |
 |------|---------|-------|
-| DO droplet 2 vCPU / 2 GB | app + Postgres queue + Caddy | $12 |
-| Home beast PC | GPU/CPU processing | $0 (+ small power) |
+| Cloud box 2 vCPU/2 GB (Hetzner ≈$6, DO ≈$12) | app + Postgres queue + CPU failover worker | ~$6–12 |
+| Home beast PC (optional) | primary GPU worker (35×) | $0 |
 | Cloudflare R2 (free tier) | serve finals, $0 egress | $0 |
-| Domain (optional DuckDNS = $0) | yourname.com | ~$1 |
-| **Total** | | **~$13/mo** |
+| Domain | yourname.com | ~$1 |
+| **Total** | | **~$7–13/mo** |
+
+> **Why hybrid beats all-cloud:** it's the only way to get the **35× feel** *and*
+> **resilience** *and* **under $15/mo**. All-cloud-fixed GPU would cost $160+/mo. This
+> gives you fast-when-home-is-up + graceful degradation when it's not.
 
 ---
 
@@ -161,6 +171,25 @@ VAAPI_DEVICE=/dev/dri/renderD128
 ```
 Run via the existing Docker worker image (`scripts/worker.js` entrypoint).
 
+### 4c. Cloud CPU failover worker (on the cloud box — the hybrid safety net)
+Run a second worker process **on the cloud box** too. Both the home GPU worker and
+the cloud CPU worker consume the **same shared queue**:
+
+- **Home up:** the GPU worker claims jobs and finishes them fast (35× feel).
+- **Home down (power/internet/outage):** the cloud CPU worker still claims and
+  completes jobs — slower, but the user still gets progress + a finished result.
+  **No stuck jobs, no outage hole.**
+
+```bash
+# on the cloud box, alongside the app:
+docker compose run -d worker   # or: node scripts/worker.js
+```
+
+> **Honest tradeoff:** both workers race the queue, so occasionally the CPU worker
+> grabs a job even when home is up (job completes, just slower that once). For ~5
+> users that's rare and harmless. If you ever want *strict* "GPU always first," split a
+> fast + a slow queue (see Part 5 note) — optional at this scale.
+
 ---
 
 ## Part 5 — Wiring: shared queue + R2 media (the code changes)
@@ -245,4 +274,4 @@ droplet has a fixed IP, so a normal A record is enough (no dynamic-IP problem).
 - **Worker never sees jobs** → the queue must be network-reachable; confirm `POSTGRES_URL`
   points at `10.0.0.1` and WireGuard is up (`ping 10.0.0.1`).
 - **Streaming slow** → make sure the viewer URL points at **R2**, not the droplet/home.
-- **Home PC offline** → new jobs queue; already-finished videos still play from R2.
+- **Home PC offline** → the cloud CPU failover worker takes over and still completes jobs (slower). Already-finished videos always play from R2.
