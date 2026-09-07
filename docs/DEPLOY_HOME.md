@@ -47,6 +47,7 @@ media served from Cloudflare R2 (free)
 | Progress via SSE | ✅ built |
 | Queue | ⚠️ local SQLite → must point at shared queue (Part 5) |
 | Media storage | ⚠️ local disk → must move read/write to R2 (Part 5) |
+| Auth (multi-user) | ⚠️ none today → add **Clerk** + per-user data scoping (Part 8) |
 
 ---
 
@@ -255,6 +256,45 @@ droplet has a fixed IP, so a normal A record is enough (no dynamic-IP problem).
    - Beast PC worker: `[gpu] vaapi decode + scale_vaapi OK` (Radeon) then `[done]`.
    - Final video present in **R2** (`rclone lsl :s3:skate-finals` or bucket UI).
 3. Open the result URL in a browser — the video streams from **R2**, not your home.
+
+---
+
+## Part 8 — Auth (Clerk) + per-user isolation (required before multi-user)
+Today the app has **no auth** and one shared store, so any user could see/delete another
+user's videos. Before opening it up, add **Clerk** and **scope data per user**.
+
+### 8a. Add Clerk
+```bash
+npm i @clerk/nextjs
+```
+
+Env (on the cloud box + local):
+```
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_...
+CLERK_SECRET_KEY=sk_...
+NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
+NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
+NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/
+NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/
+```
+
+- Wrap the root layout with `<ClerkProvider>`.
+- Protect the UI: guard the main page with `<SignedIn>` / `<SignedOut>` (Clerk gives
+  hosted `<SignIn/>` / `<SignUp/>` pages).
+- Protect the API: in each route (`upload`, `reprocess`, `delete`, `events`, `recent`)
+  call `auth()` from `@clerk/nextjs/server` and **return 401** if `!userId`, so no
+  unauthenticated uploads/reads.
+
+### 8b. Per-user data isolation (the important part)
+The queue/recent store is global. Multi-user needs a `user_id` on the jobs + recent
+rows and filtering so users only see their own work:
+
+- Add `user_id TEXT` to `jobs` and `recent` in `scripts/jobs-db.cjs`.
+- Set it from the authenticated `userId` when a job is created.
+- Filter every list/read (recent list, progress, delete, reprocess) by `user_id`.
+- Scope the R2 keys per user: `skate-finals/<userId>/<jobId>/input.mp4`.
+
+AuthN (Clerk) is the easy 30%; **authZ/scoping** is what actually makes multi-user safe.
 
 ---
 
