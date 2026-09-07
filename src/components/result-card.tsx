@@ -1,17 +1,13 @@
 "use client";
 
-import { Download, ExternalLink, Play, AlertTriangle } from "lucide-react";
+import { Download, ExternalLink, Play } from "lucide-react";
 import type { Result } from "@/lib/editor-types";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { Confetti } from "@/components/confetti";
 import { cn } from "@/lib/utils";
 
 type Props = {
   result: Result;
-  confirmReset: boolean;
-  hasRecentUpload: boolean;
-  onDownload: () => void;
-  onContinueDelete: () => void;
-  onCancelReset: () => void;
   onProcessAnother: () => void;
 };
 
@@ -19,23 +15,59 @@ function fmt(s?: number) {
   return `${(s ?? 0).toFixed(1)}s`;
 }
 
-export function ResultCard({
-  result,
-  confirmReset,
-  hasRecentUpload,
-  onDownload,
-  onContinueDelete,
-  onCancelReset,
-  onProcessAnother,
-}: Props) {
+// Human-friendly: 56.4s / 1m 28s
+function fmtHuman(s?: number) {
+  if (!s || Number.isNaN(s) || s < 0) return "";
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  const sec = Math.round(s % 60);
+  return `${m}m ${sec}s`;
+}
+
+export function ResultCard({ result, onProcessAnother }: Props) {
   const clip = result.segments === 1 ? "clip" : "clips";
   const downloadUrl = `/api/download/${result.jobId}`;
+
+  // Vary the payoff line by how many clips we cut (deterministic → no hydration mismatch).
+  const headline =
+    result.segments === 1
+      ? "🎬 One clean cut!"
+      : result.segments <= 3
+        ? "🎬 Caught"
+        : "🎬 Jam packed!";
+  const quips = [
+    "Sliced to perfection 🌶️",
+    "Bangers only 🔥",
+    "Skate edit goes nuts ⚡",
+    "Drop the deck! 🛹",
+    "Peak skating, zero filler ✨",
+  ];
+  const quip = quips[result.segments % quips.length];
+  const facts = `${result.segments} ${clip} — ${fmt(result.duration)} of skating`;
+  const removed =
+    result.sourceDuration && result.sourceDuration > result.duration
+      ? result.sourceDuration - result.duration
+      : 0;
+  const removedLabel = fmtHuman(removed);
+
   return (
     <div className="flex w-full flex-col gap-4">
-      <div className="space-y-4 rounded-2xl border border-border bg-card p-6">
-        <h2 className="text-xl font-bold">
-          Done! Found {result.segments} {clip} ({fmt(result.duration)} of skating)
-        </h2>
+      <div className="relative space-y-4 overflow-hidden rounded-2xl border border-border bg-card p-6">
+        <Confetti />
+        <div className="animate-pop space-y-1">
+          <h2 className="text-xl font-extrabold">
+            <span className="bg-gradient-to-r from-amber-400 via-orange-500 to-pink-500 bg-clip-text text-transparent">
+              {headline}
+            </span>{" "}
+            {facts}!
+          </h2>
+          <p className="text-sm text-muted-foreground">{quip}</p>
+          {removedLabel && (
+            <p className="text-sm font-bold text-amber-400">
+              ✂️ Removed {removedLabel} of dead air!
+            </p>
+          )}
+        </div>
 
         <video controls className="w-full rounded-xl" src={result.finalUrl} />
 
@@ -49,11 +81,7 @@ export function ResultCard({
             Open full video
             <ExternalLink className="ml-1 inline size-3.5" aria-hidden />
           </a>
-          <a
-            href={downloadUrl}
-            onClick={onDownload}
-            className={cn(buttonVariants({ variant: "default" }))}
-          >
+          <a href={downloadUrl} className={cn(buttonVariants({ variant: "default" }))}>
             <Download aria-hidden />
             Download video
           </a>
@@ -86,64 +114,6 @@ export function ResultCard({
           })}
         </div>
       </div>
-
-      {confirmReset && (
-        <div
-          role="alertdialog"
-          aria-label="Warning"
-          className="mx-auto w-full max-w-lg rounded-xl border border-amber-700/60 bg-amber-950/50 px-5 py-4 text-center"
-        >
-          {hasRecentUpload ? (
-            <>
-              <p className="mb-1 flex items-center justify-center gap-2 text-sm font-bold text-amber-200">
-                <AlertTriangle className="size-4" aria-hidden />
-                Delete your upload first
-              </p>
-              <p className="mb-4 text-xs text-amber-100/80">
-                You have an upload in recent. Delete it before processing another video.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="mb-1 flex items-center justify-center gap-2 text-sm font-bold text-amber-200">
-                <AlertTriangle className="size-4" aria-hidden />
-                Download your finished video first
-              </p>
-              <p className="mb-4 text-xs text-amber-100/80">
-                You haven&apos;t downloaded the completed video yet. Starting a new processing job will{" "}
-                <span className="font-bold text-amber-300">permanently delete</span> it. We recommend
-                downloading it first.
-              </p>
-            </>
-          )}
-          <div className="flex flex-col items-center gap-3">
-            {!hasRecentUpload && (
-              <a
-                href={downloadUrl}
-                onClick={onDownload}
-                className={cn(buttonVariants({ variant: "default" }))}
-              >
-                <Download aria-hidden />
-                Download video
-              </a>
-            )}
-            <div className="flex gap-3">
-              <button
-                onClick={onContinueDelete}
-                className="text-xs text-amber-300 underline hover:text-amber-200"
-              >
-                {hasRecentUpload ? "Delete upload & continue" : "Continue anyway, delete it"}
-              </button>
-              <button
-                onClick={onCancelReset}
-                className="text-xs text-muted-foreground underline hover:text-foreground"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <Button variant="secondary" className="self-center" onClick={onProcessAnother}>
         Process another

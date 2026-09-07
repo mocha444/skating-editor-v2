@@ -1,36 +1,52 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Skating Video Editor
 
-## Getting Started
+A high-performance pipeline for processing skating videos, featuring intelligent motion detection, GPU-accelerated video rendering, and efficient file deduplication.
 
-First, run the development server:
+## Pipeline Highlights
+
+*   **Fast Pre-Deduplication**: Client-side signature screening (1 MiB head/tail) ensures duplicate files are rejected instantly without uploading.
+*   **GPU Acceleration**: Automated Intel VAAPI (video hardware acceleration) pipeline for motion detection, decoding, and scaling, providing 25–35× speedup.
+*   **Scalable Architecture**: Decoupled Next.js app and Node.js workers, horizontally scalable via Docker.
+
+## Getting Started with Docker
+
+For local development and production, we use Docker to manage GPU dependencies (VAAPI) and scaling.
+
+### Prerequisites
+- Docker & Docker Compose
+- Intel Integrated GPU (`/dev/dri/card0`)
+
+### Running the Pipeline
+The pipeline is managed via Docker Compose.
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# Build and start the services (app + 1 worker)
+docker compose up -d --build
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Scaling Workers
+You can scale the processing power horizontally by spinning up additional worker instances. Each instance will automatically pick up jobs from the shared queue:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+# Scale to 3 processing workers
+docker compose up -d --scale worker=3
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+> **Note**: Workers are horizontally scalable and use atomic directory locking (`.lock`) to ensure that exactly one worker processes each job.
 
-## Learn More
+## Development
 
-To learn more about Next.js, take a look at the following resources:
+### Environment
+Configuration is defined directly in `docker-compose.yml` (no `.env` file needed). Each service sets `DATA_DIR=/app/data` internally.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### Adding New Features
+The application structure:
+- `src/app/api/`: Next.js route handlers (upload, duplicate check).
+- `scripts/worker.js`: Job processor (picks up files from `data/progress`).
+- `scripts/process_video.py`: Motion detection logic using OpenCV (MOG2).
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### Testing
+To run the test suite:
+```bash
+npm test
+```

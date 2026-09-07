@@ -16,7 +16,6 @@ export type UploadResponse = {
   stage?: string;
 };
 
-/** Upload a FormData via XHR so we get real `upload.onprogress` events. */
 export function uploadFormData(
   fd: FormData,
   onProgress: (p: UploadProgressSnapshot) => void

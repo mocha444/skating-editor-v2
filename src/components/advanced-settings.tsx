@@ -145,14 +145,12 @@ function NumberField({
   );
 }
 
-// random rebuild trigger comment
 export function AdvancedSettings({ settings, onChange }: Props) {
   const [open, setOpen] = useState(false);
   const dirty = JSON.stringify(settings) !== JSON.stringify(DEFAULT_SETTINGS);
 
   useEffect(() => {
     try {
-      // Migrate from legacy key so old stale settings are ignored
       const legacy = localStorage.getItem(STORAGE_KEY_LEGACY);
       const current = localStorage.getItem(STORAGE_KEY);
       if (legacy && !current) {
@@ -173,7 +171,7 @@ export function AdvancedSettings({ settings, onChange }: Props) {
         }
       }
     } catch {}
-  }, []);
+  }, [onChange]);
 
   useEffect(() => {
     try {

@@ -4,6 +4,7 @@ export type Result = {
   jobId: string;
   segments: number;
   duration: number;
+  sourceDuration?: number;
   finalUrl: string;
   rawSegments: [number, number][] | [number, number, number][];
   segUrls?: string[];
@@ -37,7 +38,6 @@ export const DEFAULT_SETTINGS: DetectionSettings = {
   detectShadows: "false",
 };
 
-/** Appends detection settings to a FormData using the API's expected field names. */
 export function appendSettings(fd: FormData, s: DetectionSettings) {
   fd.append("threshold", s.threshold);
   fd.append("min-contour", s.minContour);

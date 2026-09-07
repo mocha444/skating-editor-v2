@@ -1,283 +1,148 @@
-import { auth } from "@clerk/nextjs/server";
 import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
-import busboy from "busboy";
-import { Readable } from "stream";
 import { createHash } from "crypto";
-import {
-  createWriteStream,
-  readFileSync,
-  writeFileSync,
-  appendFileSync,
-  rmSync,
-  mkdirSync,
-  readdirSync,
-} from "fs";
-import type { ReadableStream as WebReadableStream } from "stream/web";
-import type { Dirent } from "fs";
+import { createWriteStream, mkdirSync, rmSync, writeFileSync } from "fs";
+import { open, readFile, readdir } from "fs/promises";
 import path from "path";
-import { videoQueue, countActiveJobs, tryLockSingleFlight, releaseSingleFlight, getJobPriority } from "@/lib/bullmq-queue";
-import { checkByteRateLimit, updateByteRateLimit, MAX_UPLOAD_BYTES_PER_SECOND } from "@/lib/bullmq-queue";
-import { db } from "@/lib/db";
-import { UPLOADS_DIR, RESULTS_DIR, PROGRESS_DIR, newJobId } from "@/lib/storage";
+import { UPLOADS_DIR, PROGRESS_DIR, newJobId } from "@/lib/storage";
+import { addRecent } from "@/lib/store";
 
-export const runtime = "nodejs";
+const SIG_BYTES = 1024 * 1024; // must match client-hash.ts (1 MiB)
 
-function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function writeProgress(id: string, percent: number, stage: string) {
-  const metaPath = path.join(PROGRESS_DIR, id + ".json");
+async function readRangeMd5(filePath: string, start: number, end: number): Promise<string> {
+  const fh = await open(filePath, "r");
   try {
-    const meta = JSON.parse(readFileSync(metaPath, "utf8"));
-    meta.percent = percent; meta.stage = stage; meta.lastUpdate = Date.now();
-    writeFileSync(metaPath, JSON.stringify(meta));
-  } catch { /* ignore */ }
+    const len = end - start;
+    const buf = Buffer.alloc(len);
+    await fh.read(buf, 0, len, start);
+    return createHash("md5").update(buf).digest("hex");
+  } finally {
+    await fh.close();
+  }
 }
 
-function appendLog(id: string, line: string) {
-  const logPath = path.join(PROGRESS_DIR, id + ".log");
-  appendFileSync(logPath, line + "\n");
+async function computeSig(filePath: string, size: number) {
+  if (size <= SIG_BYTES) {
+    const whole = await readRangeMd5(filePath, 0, size);
+    return { size, head: whole, tail: whole };
+  }
+  const head = await readRangeMd5(filePath, 0, SIG_BYTES);
+  const tail = await readRangeMd5(filePath, size - SIG_BYTES, size);
+  return { size, head, tail };
 }
 
-function wipeAll() {
-  rmSync(UPLOADS_DIR, { recursive: true, force: true });
-  rmSync(RESULTS_DIR, { recursive: true, force: true });
-  rmSync(PROGRESS_DIR, { recursive: true, force: true });
-}
-
-function findDuplicateDir(clientHash: string | null): string | null {
-  if (!clientHash) return null;
-  let entries: Dirent[] = [];
-  try { entries = readdirSync(UPLOADS_DIR, { withFileTypes: true }); } catch { return null; }
+async function findDuplicateHash(hashHex: string, excludeId: string): Promise<string | null> {
+  const entries = await readdir(UPLOADS_DIR, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.isDirectory() || !entry.name.startsWith("skate-")) continue;
+    if (entry.name === `skate-${excludeId}`) continue;
     try {
-      const stored = readFileSync(path.join(UPLOADS_DIR, entry.name, "hash.md5"), "utf8").trim();
-      if (stored === clientHash) return entry.name;
-    } catch { /* no hash yet */ }
+      const stored = (await readFile(path.join(UPLOADS_DIR, entry.name, "hash.md5"), "utf8")).trim();
+      if (stored === hashHex) return entry.name;
+    } catch {}
   }
   return null;
 }
 
-function cleanupDir(dir: string, id: string) {
-  try { rmSync(dir, { recursive: true, force: true }); } catch {}
-  try { rmSync(path.join(PROGRESS_DIR, id + ".json"), { force: true }); } catch {}
-  try { rmSync(path.join(PROGRESS_DIR, id + ".log"), { force: true }); } catch {}
-}
+export const runtime = "nodejs";
+export const maxDuration = 1800;
+export const dynamic = "force-dynamic";
 
 export async function POST(req: NextRequest) {
-  await auth.protect();
-  if (!(await tryLockSingleFlight())) {
-    return NextResponse.json({ ok: false, error: "Another video is already being uploaded or processed. Please wait for it to finish." }, { status: 409 });
-  }
-
   try {
-    // Fast-fail while another job is still processing
-    if ((await countActiveJobs()) > 0) {
-      return NextResponse.json({ ok: false, error: "Another video is already being processed. Please wait for it to finish." }, { status: 409 });
-    }
+    const chunkId = req.headers.get("x-chunk-id") || newJobId();
+    const fileName = req.headers.get("x-file-name") || "video.mp4";
+    const dir = path.join(UPLOADS_DIR, `skate-${chunkId}`);
+    const inPath = path.join(dir, "input.mp4");
+    const metaPath = path.join(PROGRESS_DIR, chunkId + ".json");
 
-    const contentType = req.headers.get("content-type") || "";
-    if (!contentType.startsWith("multipart/form-data")) {
-      return NextResponse.json({ error: "expected multipart/form-data" }, { status: 400 });
-    }
+    mkdirSync(dir, { recursive: true });
+    mkdirSync(path.join(dir, "segments"), { recursive: true });
+    mkdirSync(PROGRESS_DIR, { recursive: true });
 
-    // Extract IP for rate limiting (x-forwarded-for is set by Caddy reverse proxy)
-    const clientIp = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || req.headers.get("x-real-ip") || "anon";
+    const formData = await req.formData();
+    const file = formData.get("video") as File;
+    if (!file) return NextResponse.json({ error: "no file" }, { status: 400 });
 
-    const bb = busboy({ headers: { "content-type": contentType } });
+    // Stream the file to disk while computing the full MD5 in a single pass
+    // (no full-file buffer in memory, no second read of the file).
+    const hash = createHash("md5");
+    const out = createWriteStream(inPath);
+    await new Promise<void>((res, rej) => {
+      const reader = (file.stream() as ReadableStream<Uint8Array>).getReader();
+      out.on("error", rej);
+      out.on("finish", () => res());
+      const pump = async () => {
+        try {
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            hash.update(value);
+            if (!out.write(value)) await new Promise<void>((r) => out.once("drain", r));
+          }
+          out.end();
+        } catch (e) {
+          rej(e instanceof Error ? e : new Error(String(e)));
+        }
+      };
+      pump();
+    });
+    const hashHex = hash.digest("hex");
 
-    const fields: Record<string, string> = {};
-    const id = newJobId();
-    let dir = "";
-    let inPath = "";
-    let segDir = "";
-    let metaPath = "";
-    let fileSeen = false;
-    let prepared = false;
-    let duplicateDir: string | null = null;
-    const uploadError: { current: Error | null } = { current: null };
-    let fileSize = 0;
-    let fileName = "";
-    let fileWriteDone: Promise<void> = Promise.resolve();
-    let serverHash: string | null = null;
-
-    // Duplicate detection resolves on the hash field (client sends it before the video)
-    bb.on("field", (name, val) => {
-      fields[name] = val;
-      if (name === "hash" && !duplicateDir) {
-        duplicateDir = findDuplicateDir(val);
+    // Authoritative server-side dedupe: if an identical file already exists,
+    // discard this upload and report the duplicate (no job, no disk waste).
+    try {
+      const existing = await findDuplicateHash(hashHex, chunkId);
+      if (existing) {
+        rmSync(dir, { recursive: true, force: true });
+        return NextResponse.json({ ok: false, duplicate: true, existingDir: existing });
       }
-    });
+    } catch {}
 
-    bb.on("file", (name, stream, info) => {
-      if (name !== "video") { stream.resume(); return; }
-      fileSeen = true;
-      fileName = info.filename;
-      // Duplicate already known from the hash field → drop the bytes, write nothing
-      if (duplicateDir) { stream.resume(); return; }
+    writeFileSync(path.join(dir, "hash.md5"), hashHex, "utf8");
+    writeFileSync(path.join(dir, "sig.json"), JSON.stringify(await computeSig(inPath, file.size)));
 
-      if (!prepared) {
-        prepared = true;
-        dir = path.join(UPLOADS_DIR, `skate-${id}`);
-        segDir = path.join(dir, "segments");
-        inPath = path.join(dir, "input.mp4");
-        metaPath = path.join(PROGRESS_DIR, id + ".json");
-
-        // Single-active-job model: clear all previous files before saving the new upload
-        wipeAll();
-        mkdirSync(dir, { recursive: true });
-        mkdirSync(segDir, { recursive: true });
-        mkdirSync(PROGRESS_DIR, { recursive: true });
-        writeFileSync(metaPath, JSON.stringify({ jobId: id, dir: `skate-${id}`, status: "running", started: Date.now(), percent: 5, stage: "saving" }));
-        console.log(`[upload] received: ${fileName} | target: ${dir}`);
-      }
-
-      const hash = createHash("md5");
-      const out = createWriteStream(inPath);
-      stream.on("data", d => { hash.update(d); fileSize += d.length; });
-      fileWriteDone = new Promise<void>((resolve, reject) => {
-        out.on("error", reject);
-        out.on("finish", () => { serverHash = hash.digest("hex"); resolve(); });
-      });
-      stream.pipe(out, { end: true });
-    });
-
-    bb.on("error", (e: unknown) => {
-      uploadError.current = e instanceof Error ? e : new Error(String(e));
-    });
-
-    const multipartDone = new Promise<void>((resolve) => {
-      bb.on("close", () => resolve());
-    });
-
-    const bodyStream = Readable.fromWeb(req.body as unknown as WebReadableStream);
-    bodyStream.on("error", () => {});
-    bodyStream.pipe(bb);
-
-    await multipartDone;
-    await fileWriteDone;
-
-    const uploadFailure = uploadError.current;
-    if (uploadFailure) {
-      if (prepared) cleanupDir(dir, id);
-      return NextResponse.json({ error: "upload failed: " + uploadFailure.message }, { status: 400 });
-    }
-    if (!fileSeen) {
-      if (prepared) cleanupDir(dir, id);
-      return NextResponse.json({ error: "no file" }, { status: 400 });
-    }
-    if (duplicateDir) {
-      if (prepared) cleanupDir(dir, id);
-      console.log(`[upload] duplicate: ${fileName} matches ${duplicateDir}`);
-      return NextResponse.json({ ok: false, duplicate: true, existingDir: duplicateDir });
-    }
-
-    console.log(`[upload] stored: ${fmtBytes(fileSize)} | hash: ${serverHash}`);
-    writeProgress(id, 15, "upload_complete");
-    appendLog(id, `[upload] saved ${fileName} (${fmtBytes(fileSize)})`);
-
-    // Validate with ffmpeg
     try {
       await new Promise<void>((res, rej) => {
         const p = spawn("ffmpeg", ["-v", "quiet", "-i", inPath, "-t", "0.1", "-f", "null", "-"]);
-        p.on("close", c => c === 0 ? res() : rej(new Error("invalid")));
+        p.on("close", (c) => (c === 0 ? res() : rej(new Error("invalid"))));
       });
     } catch {
-      writeFileSync(inPath, "");
-      writeProgress(id, 0, "error");
+      rmSync(dir, { recursive: true, force: true });
       return NextResponse.json({ error: "corrupt video file" }, { status: 400 });
     }
 
-    // Persist hash for duplicate detection
-    try {
-      writeFileSync(path.join(dir, "hash.md5"), serverHash || "", "utf8");
-    } catch { /* ignore */ }
-    appendLog(id, `[hash] ${serverHash}`);
-    writeProgress(id, 25, "hash_computed");
+    writeFileSync(metaPath, JSON.stringify({
+      jobId: chunkId,
+      dir: `skate-${chunkId}`,
+      inPath,
+      segDir: path.join(dir, "segments"),
+      id: chunkId,
+      threshold: req.headers.get("x-threshold") || "0.003",
+      minContour: req.headers.get("x-min-contour") || "50",
+      minMotionFrames: req.headers.get("x-min-motion-frames") || "8",
+      bufferFrames: req.headers.get("x-buffer-frames") || "60",
+      historyStr: req.headers.get("x-history") || "300",
+      varThreshold: req.headers.get("x-var-threshold") || "25",
+      detectShadows: req.headers.get("x-detect-shadows") || "false",
+      status: "pending",
+      started: Date.now(),
+      percent: 5,
+      stage: "queued",
+    }));
 
-    // Per-user byte-rate limit (5 MB/s rolling 60s window)
-    // Rate key uses client IP from Caddy reverse proxy
-    const userKey = clientIp;
-    const rateCheck = await checkByteRateLimit(userKey);
-    if (!rateCheck.allowed) {
-      return NextResponse.json({ ok: false, error: `Rate limit exceeded (${MAX_UPLOAD_BYTES_PER_SECOND / (1024*1024)}MB/s). Retry in ${rateCheck.resetIn}s.`, retryIn: rateCheck.resetIn }, { status: 429 });
-    }
+    addRecent({
+      dir: `skate-${chunkId}`,
+      hash: hashHex,
+      originalName: fileName,
+      duration: 0,
+      uploadedAt: Date.now(),
+    }).catch(() => {});
 
-    // Update byte usage after upload (before queue submit)
-    await updateByteRateLimit(userKey, fileSize);
-
-    // Submit to BullMQ with priority based on system load
-    const priority = await getJobPriority();
-    try {
-      await videoQueue.add("video-process", {
-        inPath, segDir, id, dir: `skate-${id}`,
-        threshold: fields["threshold"] || "0.003",
-        minContour: fields["min-contour"] || "50",
-        minMotionFrames: fields["min-motion-frames"] || "8",
-        bufferFrames: fields["buffer-frames"] || "60",
-        historyStr: fields["history"] || "300",
-        varThreshold: fields["var-threshold"] || "25",
-        detectShadows: fields["detect-shadows"] || "false",
-      }, { jobId: id, priority });
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.error("[upload] queue add error:", msg);
-      cleanupDir(dir, id);
-      return NextResponse.json({ error: msg }, { status: 500 });
-    }
-
-    // Persist to Postgres — link to Clerk user
-    try {
-      const { userId: clerkId } = await auth();
-      if (clerkId) {
-        await db.query(
-          `INSERT INTO users (clerk_id) VALUES ($1) ON CONFLICT (clerk_id) DO NOTHING`,
-          [clerkId]
-        );
-        const userRes = await db.query("SELECT id FROM users WHERE clerk_id = $1", [clerkId]);
-        const userId = userRes.rows[0]?.id;
-        if (userId) {
-          await db.query(
-            `INSERT INTO videos (dir, hash, original_name, file_size, user_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (dir) DO UPDATE SET user_id = $5`,
-            [`skate-${id}`, serverHash, fileName, fileSize, userId]
-          );
-          await db.query(
-            `INSERT INTO jobs (job_id, status, percent, stage, user_id) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (job_id) DO UPDATE SET percent = $3, stage = $4, user_id = $5`,
-            [id, "running", 25, "hash_computed", userId]
-          );
-        } else {
-          // Fallback without user
-          await db.query(
-            `INSERT INTO videos (dir, hash, original_name, file_size) VALUES ($1, $2, $3, $4) ON CONFLICT (dir) DO NOTHING`,
-            [`skate-${id}`, serverHash, fileName, fileSize]
-          );
-          await db.query(
-            `INSERT INTO jobs (job_id, status, percent, stage) VALUES ($1, $2, $3, $4) ON CONFLICT (job_id) DO UPDATE SET percent = $3, stage = $4`,
-            [id, "running", 25, "hash_computed"]
-          );
-        }
-      } else {
-        await db.query(
-          `INSERT INTO videos (dir, hash, original_name, file_size) VALUES ($1, $2, $3, $4) ON CONFLICT (dir) DO NOTHING`,
-          [`skate-${id}`, serverHash, fileName, fileSize]
-        );
-        await db.query(
-          `INSERT INTO jobs (job_id, status, percent, stage) VALUES ($1, $2, $3, $4) ON CONFLICT (job_id) DO UPDATE SET percent = $3, stage = $4`,
-          [id, "running", 25, "hash_computed"]
-        );
-      }
-    } catch (e: unknown) {
-      console.error("[db] insert error:", e instanceof Error ? e.message : String(e));
-    }
-
-    return NextResponse.json({ ok: true, jobId: id, dir: `skate-${id}` });
-  } finally {
-    await releaseSingleFlight();
+    return NextResponse.json({ ok: true, jobId: chunkId, dir: `skate-${chunkId}`, complete: true, hash: hashHex });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error("[upload] error:", msg);
+    return NextResponse.json({ error: msg || "upload failed" }, { status: 500 });
   }
 }

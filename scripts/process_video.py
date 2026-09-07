@@ -8,7 +8,7 @@ ffmpeg decodes + scales once, Python classifies. Frame-rate-sensitive parameters
 (min-motion-frames / buffer-frames) are scaled from the source frame rate to the
 detection frame rate so their time-based meaning is preserved.
 
-When an Intel iGPU is available (/dev/dri/renderD128), ffmpeg decodes and
+When an Intel iGPU is available (/dev/dri/card0), ffmpeg decodes and
 downscales on the GPU (vaapi + scale_vaapi) and only the tiny 320x180 frames
 cross back — a large win on high-bitrate 4K HEVC. It falls back to CPU
 automatically if the GPU path fails.
@@ -45,7 +45,7 @@ max_fps = args.max_fps
 # --- Detection resolution (downscaled for speed) ---
 W, H = 320, 180
 
-VAAPI_DEVICE = "/dev/dri/renderD128"
+VAAPI_DEVICE = "/dev/dri/card0"
 GPU_AVAILABLE = os.path.exists(VAAPI_DEVICE)
 
 def probe_fps(path: str) -> float:
@@ -71,7 +71,26 @@ def probe_fps(path: str) -> float:
         pass
     return 30.0
 
+
+def probe_duration(path: str) -> float:
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error",
+             "-select_streams", "v:0",
+             "-show_entries", "stream=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", path],
+            capture_output=True, text=True, timeout=15,
+        )
+        val = out.stdout.strip()
+        if val:
+            return float(val)
+    except Exception:
+        pass
+    return 0.0
+
+
 src_fps = probe_fps(video_path)
+source_duration = probe_duration(video_path) or 0.0
 det_fps = min(src_fps, max_fps) if src_fps > 0 else max_fps
 rate_scale = det_fps / src_fps if src_fps > 0 else 1.0
 
@@ -170,7 +189,7 @@ commands.append(build_ffmpeg_cmd(False))
 
 for use_gpu, cmd in zip([True, False] if GPU_AVAILABLE else [False], commands):
     if not use_gpu:
-        print("[gpu] /dev/dri/renderD128 not available — CPU decode", file=sys.stderr)
+        print("[gpu] /dev/dri/card0 not available — CPU decode", file=sys.stderr)
     starts, ends, frames_read, rc, err_tail = run_detection(cmd, use_gpu)
     if frames_read == 0 or rc != 0:
         if use_gpu:
@@ -205,4 +224,4 @@ segments = [(round(s, 2), round(e, 2)) for s, e in merged if (e - s) > 0.5]
 total = sum(e - s for s, e in segments)
 print(f"[mog2+contour] {len(segments)} segs | {total:.1f}s total", file=sys.stderr)
 
-print(json.dumps({"segments": segments, "count": len(segments)}))
+print(json.dumps({"segments": segments, "count": len(segments), "source_duration": source_duration}))

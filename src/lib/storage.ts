@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
-const DATA_ROOT = process.env.DATA_DIR || path.join(process.cwd(), "data");
+export const DATA_ROOT = process.env.DATA_DIR || path.join(process.cwd(), "data");
 
 export const UPLOADS_DIR = path.join(DATA_ROOT, "uploads");
 export const RESULTS_DIR = path.join(DATA_ROOT, "results");

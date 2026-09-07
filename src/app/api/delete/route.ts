@@ -1,23 +1,27 @@
-import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { rm, stat } from "fs/promises";
+import { rm } from "fs/promises";
 import path from "path";
-import { UPLOADS_DIR } from "@/lib/storage";
+import { UPLOADS_DIR, PROGRESS_DIR, RESULTS_DIR } from "@/lib/storage";
+import { removeRecent } from "@/lib/store";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
-  await auth.protect();
   const form = await req.formData();
   const dir = form.get("dir") as string;
   if (!dir || dir.includes("..") || dir.includes("/")) {
     return NextResponse.json({ error: "invalid dir" }, { status: 400 });
   }
-  const target = path.join(UPLOADS_DIR, dir);
+
+  const id = dir.replace(/^skate-/, "");
   try {
-    const s = await stat(target);
-    if (!s.isDirectory()) return NextResponse.json({ error: "not a dir" }, { status: 400 });
-    await rm(target, { recursive: true, force: true });
+    await Promise.all([
+      rm(path.join(UPLOADS_DIR, dir), { recursive: true, force: true }),
+      rm(path.join(PROGRESS_DIR, id + ".json"), { force: true }),
+      rm(path.join(PROGRESS_DIR, id + ".log"), { force: true }),
+      rm(path.join(RESULTS_DIR, `skating_final_${id}.mp4`), { force: true }),
+      removeRecent(dir),
+    ]);
     return NextResponse.json({ ok: true });
   } catch {
     return NextResponse.json({ error: "delete failed" }, { status: 500 });
