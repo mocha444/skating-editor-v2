@@ -69,6 +69,7 @@ function getDb() {
       history          TEXT,
       var_threshold    TEXT,
       detect_shadows   TEXT,
+      keep_source      TEXT,
       original_name    TEXT,
       result           TEXT,
       attempts         INTEGER NOT NULL DEFAULT 0,
@@ -85,6 +86,10 @@ function getDb() {
       uploaded_at   INTEGER NOT NULL
     );
   `);
+  // Migration: add keep_source for pre-existing DBs.
+  try {
+    db.exec("ALTER TABLE jobs ADD COLUMN keep_source TEXT");
+  } catch {}
   return db;
 }
 
@@ -115,6 +120,7 @@ function rowToJob(r) {
     history: r.history,
     varThreshold: r.var_threshold,
     detectShadows: r.detect_shadows,
+    keepSource: r.keep_source,
     originalName: r.original_name,
     result,
     attempts: r.attempts,
@@ -130,15 +136,15 @@ function createJob(j) {
   d.prepare(`
     INSERT INTO jobs (id, dir, in_path, seg_dir, status, stage, percent, started,
       threshold, min_contour, min_motion_frames, buffer_frames, history, var_threshold,
-      detect_shadows, original_name, attempts, max_attempts, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      detect_shadows, keep_source, original_name, attempts, max_attempts, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     j.id, j.dir, j.inPath, j.segDir,
     j.status || "pending", j.stage || "queued", j.percent || 5,
     j.started ?? null,
     j.threshold ?? null, j.minContour ?? null, j.minMotionFrames ?? null,
     j.bufferFrames ?? null, j.history ?? null, j.varThreshold ?? null, j.detectShadows ?? null,
-    j.originalName ?? null,
+    j.keepSource ?? "true", j.originalName ?? null,
     0, j.maxAttempts || 3, created,
   );
   return getJob(j.id);

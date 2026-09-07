@@ -111,7 +111,10 @@ export default function Page() {
         }
       } catch {}
     });
-    es.onerror = () => es.close();
+    es.onerror = () => {
+      /* Intentionally do NOT close on error: EventSource auto-reconnects,
+         and the server re-sends a fresh snapshot on each (re)connect. */
+    };
     esRef.current = es;
   }
 

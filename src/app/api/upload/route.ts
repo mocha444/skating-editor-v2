@@ -102,6 +102,7 @@ function settingsFrom(headers: Headers): Record<string, string> {
     history: headers.get("x-history") || "300",
     varThreshold: headers.get("x-var-threshold") || "25",
     detectShadows: headers.get("x-detect-shadows") || "false",
+    keepSource: headers.get("x-keep-source") || "true",
   };
 }
 
@@ -234,7 +235,7 @@ export async function POST(req: NextRequest) {
       started: Date.now(), originalName: fileName,
       threshold: s.threshold, minContour: s.minContour, minMotionFrames: s.minMotionFrames,
       bufferFrames: s.bufferFrames, history: s.history, varThreshold: s.varThreshold,
-      detectShadows: s.detectShadows,
+      detectShadows: s.detectShadows, keepSource: s.keepSource,
     });
 
     db.addRecent({

@@ -12,6 +12,7 @@ export async function GET() {
     duration: e.duration,
     durationLabel: e.duration ? formatDuration(e.duration) : "—",
     hash: e.hash ? e.hash.slice(0, 8) : "",
+    originalName: e.originalName && e.originalName !== e.dir ? e.originalName : undefined,
   }));
   return NextResponse.json(results);
 }

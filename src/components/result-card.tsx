@@ -1,6 +1,7 @@
 "use client";
 
-import { Download, ExternalLink, Play } from "lucide-react";
+import { useCallback, useRef, useState } from "react";
+import { Download, ExternalLink } from "lucide-react";
 import type { Result } from "@/lib/editor-types";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Confetti } from "@/components/confetti";
@@ -14,8 +15,6 @@ type Props = {
 function fmt(s?: number) {
   return `${(s ?? 0).toFixed(1)}s`;
 }
-
-// Human-friendly: 56.4s / 1m 28s
 function fmtHuman(s?: number) {
   if (!s || Number.isNaN(s) || s < 0) return "";
   if (s < 60) return `${s.toFixed(1)}s`;
@@ -23,12 +22,78 @@ function fmtHuman(s?: number) {
   const sec = Math.round(s % 60);
   return `${m}m ${sec}s`;
 }
+function fmtClock(s: number) {
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  const msec = Math.floor((s % 1) * 10);
+  return `${m}:${sec.toString().padStart(2, "0")}.${msec}`;
+}
+function clamp(v: number, lo: number, hi: number) {
+  return Math.min(hi, Math.max(lo, v));
+}
 
 export function ResultCard({ result, onProcessAnother }: Props) {
   const clip = result.segments === 1 ? "clip" : "clips";
   const downloadUrl = `/api/download/${result.jobId}`;
 
-  // Vary the payoff line by how many clips we cut (deterministic → no hydration mismatch).
+  // Per-clip position in the FINAL (concatenated) video. The player plays the
+  // final file, so we map the source-timestamp segments onto cumulative offsets.
+  const lengths =
+    result.rawSegments.map((seg, i) => {
+      const srcLen = seg[1] - seg[0];
+      return result.segDurations?.[i] && result.segDurations[i] > 0 ? result.segDurations[i] : srcLen;
+    }) || [];
+  const starts: number[] = [];
+  {
+    let acc = 0;
+    for (const len of lengths) {
+      starts.push(acc);
+      acc += len;
+    }
+  }
+  const total = Math.max(result.duration || accOf(lengths), accOf(lengths), 1);
+  function accOf(arr: number[]) {
+    return arr.reduce((a, b) => a + b, 0);
+  }
+
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const [currentTime, setCurrentTime] = useState(0);
+
+  const activeSeg = (t: number): number => {
+    for (let i = starts.length - 1; i >= 0; i--) {
+      if (t >= starts[i] - 0.05) return i;
+    }
+    return -1;
+  };
+  const active = activeSeg(currentTime);
+
+  const playSeg = useCallback(
+    (i: number) => {
+      const v = videoRef.current;
+      if (!v) return;
+      setCurrentTime(starts[i] ?? 0);
+      v.currentTime = starts[i] ?? 0;
+      void v.play();
+    },
+    [starts]
+  );
+
+  const seekFromEvent = useCallback(
+    (clientX: number) => {
+      const v = videoRef.current;
+      const bar = barRef.current;
+      if (!v || !bar) return;
+      const rect = bar.getBoundingClientRect();
+      const frac = clamp((clientX - rect.left) / rect.width, 0, 1);
+      const t = frac * v.duration;
+      setCurrentTime(t);
+      v.currentTime = t;
+      void v.play();
+    },
+    []
+  );
+
   const headline =
     result.segments === 1
       ? "🎬 One clean cut!"
@@ -69,7 +134,71 @@ export function ResultCard({ result, onProcessAnother }: Props) {
           )}
         </div>
 
-        <video controls className="w-full rounded-xl" src={result.finalUrl} />
+        {/* Player + segment timeline */}
+        <div className="space-y-2">
+          <video
+            ref={videoRef}
+            controls
+            preload="metadata"
+            className="w-full rounded-xl"
+            src={result.finalUrl}
+            onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+            onLoadedMetadata={() => setCurrentTime(0)}
+          />
+
+          <div
+            ref={barRef}
+            role="slider"
+            aria-label="Seek within video"
+            aria-valuemin={0}
+            aria-valuemax={Math.round(total)}
+            aria-valuenow={Math.round(currentTime)}
+            tabIndex={0}
+            onClick={(e) => seekFromEvent(e.clientX)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowRight") {
+                const v = videoRef.current;
+                if (!v) return;
+                v.currentTime = Math.min(v.duration, v.currentTime + 1);
+              } else if (e.key === "ArrowLeft") {
+                const v = videoRef.current;
+                if (!v) return;
+                v.currentTime = Math.max(0, v.currentTime - 1);
+              }
+            }}
+            className="group relative h-6 w-full cursor-pointer touch-none select-none rounded-md"
+          >
+            {/* thin track line */}
+            <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-muted" />
+            {/* one amber bar per segment, positioned in final-video time */}
+            {starts.map((st, i) => {
+              const left = (st / total) * 100;
+              const width = (lengths[i] / total) * 100;
+              return (
+                <div
+                  key={i}
+                  className={cn(
+                    "absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full transition-colors",
+                    active === i
+                      ? "bg-amber-400"
+                      : "bg-amber-400/60 hover:bg-amber-400/90"
+                  )}
+                  style={{ left: `${left}%`, width: `max(0.6%, ${width}%)` }}
+                />
+              );
+            })}
+            {/* playhead */}
+            <div
+              className="pointer-events-none absolute inset-y-0.5 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+              style={{ left: `${(currentTime / total) * 100}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>{fmtClock(currentTime)}</span>
+            <span className="text-amber-400">{active >= 0 ? `Clip ${active + 1}` : ""}</span>
+            <span>{fmtClock(total)}</span>
+          </div>
+        </div>
 
         <div className="flex flex-wrap items-center justify-center gap-2">
           <a
@@ -87,29 +216,36 @@ export function ResultCard({ result, onProcessAnother }: Props) {
           </a>
         </div>
 
-        <div className="space-y-2">
-          <p className="text-sm font-semibold text-muted-foreground">Segments extracted:</p>
+        <div className="space-y-2" role="list">
+          <p className="text-sm font-semibold text-muted-foreground">
+            Segments extracted — click a clip to jump to it in the player:
+          </p>
           {result.rawSegments.map((seg, i) => {
             const [s, e] = seg;
-            const segUrl = result.segUrls?.[i] || result.finalUrl;
+            const isActive = active === i;
             return (
-              <div
+              <button
                 key={i}
-                className="flex items-center justify-between gap-2 rounded-lg bg-muted px-3 py-1.5 text-sm"
+                type="button"
+                role="listitem"
+                onClick={() => playSeg(i)}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                  isActive
+                    ? "bg-amber-400/15 ring-1 ring-amber-400/60"
+                    : "bg-muted hover:bg-muted/70"
+                )}
               >
-                <span>
-                  Clip {i + 1} — {fmt(s)} → {fmt(e)}
+                <span className="flex min-w-0 items-center gap-2 font-medium text-amber-400">
+                  <span className="truncate">
+                    Clip {i + 1} — {fmt(s)} → {fmt(e)}
+                  </span>
+                  {isActive && <span className="shrink-0 text-xs text-amber-400">▶ playing</span>}
                 </span>
-                <a
-                  href={segUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1 text-xs font-bold text-amber-400 hover:text-amber-300"
-                >
-                  <Play className="size-3" aria-hidden />
-                  Play
-                </a>
-              </div>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  @ {fmtClock(starts[i] ?? 0)}
+                </span>
+              </button>
             );
           })}
         </div>

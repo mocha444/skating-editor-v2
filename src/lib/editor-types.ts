@@ -7,6 +7,7 @@ export type Result = {
   sourceDuration?: number;
   finalUrl: string;
   rawSegments: [number, number][] | [number, number, number][];
+  segDurations?: number[];
   segUrls?: string[];
   logs?: string[];
 };
@@ -16,6 +17,7 @@ export type RecentItem = {
   dir: string;
   url: string;
   date: string;
+  originalName?: string;
 };
 
 export type DetectionSettings = {
@@ -26,6 +28,7 @@ export type DetectionSettings = {
   history: string;
   varThreshold: string;
   detectShadows: string;
+  keepSource: string;
 };
 
 export const DEFAULT_SETTINGS: DetectionSettings = {
@@ -36,6 +39,7 @@ export const DEFAULT_SETTINGS: DetectionSettings = {
   history: "300",
   varThreshold: "25",
   detectShadows: "false",
+  keepSource: "true",
 };
 
 export function appendSettings(fd: FormData, s: DetectionSettings) {

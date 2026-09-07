@@ -52,9 +52,10 @@ export function RecentList({ items, busy, onReProcess, onDelete }: Props) {
                   href={r.url}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="truncate font-mono text-sm text-amber-400 underline-offset-2 hover:text-amber-300 hover:underline"
+                  className="truncate font-semibold text-amber-400 underline-offset-2 hover:text-amber-300 hover:underline"
+                  title={r.dir}
                 >
-                  {r.dir}
+                  {r.originalName || r.dir}
                 </a>
                 <span className="text-xs text-muted-foreground">
                   {r.date} · {r.durationLabel || "—"}

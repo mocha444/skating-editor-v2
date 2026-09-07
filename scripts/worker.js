@@ -127,6 +127,7 @@ async function processJob(job) {
   appendLog(id, `[mog2] Found ${segments.length} segments`);
 
   const segFiles = [];
+  const segDurations = [];
   for (let i = 0; i < segments.length; i++) {
     const [s, e] = segments[i];
     if (e - s < 0.5) continue;
@@ -135,6 +136,7 @@ async function processJob(job) {
     appendLog(id, `[cut] ${i + 1}/${segments.length} ${s.toFixed(2)}s → ${e.toFixed(2)}s`);
     await runFfmpeg(["-y", "-ss", String(s), "-i", inPath, "-t", String(e - s), "-c", "copy", "-avoid_negative_ts", "make_zero", f], id, "cut");
     segFiles.push(f);
+    segDurations.push((await ffprobeDuration(f)) ?? (e - s));
   }
 
   update(id, { stage: "concat", percent: 90 });
@@ -156,10 +158,23 @@ async function processJob(job) {
       : duration,
     finalUrl: `/results/skating_final_${id}.mp4`,
     rawSegments: segments,
+    segDurations,
     segUrls: segFiles.map((f, i) => `/uploads/skate-${id}/segments/seg-${i}.mp4`),
   };
   completeJob(id, result, now());
   updateRecentDuration(job.dir || `skate-${id}`, duration);
+
+  // Disk management: optionally free the large original file once processing is
+  // done (user opted in via settings). Keeps the result + segments.
+  if (job.keepSource !== "true") {
+    try {
+      fs.rmSync(inPath, { force: true });
+      appendLog(id, "[cleanup] Removed original source file (keep source off)");
+    } catch (e) {
+      appendLog(id, `[cleanup] Could not remove source: ${(e && e.message) || e}`);
+    }
+  }
+
   appendLog(id, "[done] Final video ready");
   appendLog(id, `[timing] Total elapsed: ${((now() - (job.started || now())) / 1000).toFixed(1)}s`);
 }

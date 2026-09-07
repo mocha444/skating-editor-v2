@@ -260,6 +260,22 @@ export function AdvancedSettings({ settings, onChange }: Props) {
                 </button>
               </label>
             </div>
+            <div className="flex items-end gap-2 text-xs">
+              <input
+                id="keep-source"
+                type="checkbox"
+                checked={settings.keepSource !== "true"}
+                onChange={(e) => onChange({ keepSource: String(!e.target.checked) })}
+                className="size-4 shrink-0 accent-amber-400"
+              />
+              <label
+                htmlFor="keep-source"
+                className="cursor-pointer font-medium text-muted-foreground"
+                title="After processing, delete the large original file to save disk space. Reprocessing this video later will require re-uploading it."
+              >
+                Delete original after processing
+              </label>
+            </div>
           </div>
         </TooltipProvider>
       )}

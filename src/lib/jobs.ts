@@ -27,6 +27,7 @@ export type Job = {
   history: string | null;
   varThreshold: string | null;
   detectShadows: string | null;
+  keepSource: string | null;
   originalName: string | null;
   result: unknown;
   attempts: number;
@@ -60,6 +61,7 @@ export type JobPatch = Partial<
     | "history"
     | "varThreshold"
     | "detectShadows"
+    | "keepSource"
   >
 >;
 

@@ -146,6 +146,7 @@ async function finalize(
       "x-history": settings.history,
       "x-var-threshold": settings.varThreshold,
       "x-detect-shadows": settings.detectShadows,
+      "x-keep-source": settings.keepSource === "true" ? "true" : "false",
     },
     body: new FormData(),
   });

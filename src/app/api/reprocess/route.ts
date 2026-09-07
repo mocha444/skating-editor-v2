@@ -41,6 +41,7 @@ export async function POST(req: Request) {
     history: historyStr || "300",
     varThreshold: varThreshold || "25",
     detectShadows: detectShadows || "false",
+    keepSource: "true",
   });
 
   return NextResponse.json({ ok: true, jobId, dir });
