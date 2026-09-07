@@ -127,11 +127,11 @@ def run_detection(cmd, gpu: bool):
 
     frame_size = W * H
     motion_history = deque(maxlen=min_motion_frames_eff + 5)
+    motion_flags = []
     clip_starts = []
     clip_ends = []
     in_motion = False
     current_start = None
-    last_motion_frame = 0
     frame_idx = 0
     frames_read = 0
     err_tail = ""
@@ -158,8 +158,7 @@ def run_detection(cmd, gpu: bool):
             contours, _ = cv2.findContours(fgmask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             motion_pixels = sum(cv2.contourArea(c) for c in contours if cv2.contourArea(c) > min_contour_area)
             has_motion = (motion_pixels / (W * H)) > motion_threshold
-            if has_motion:
-                last_motion_frame = frame_idx
+            motion_flags.append(has_motion)
             motion_history.append(has_motion)
 
             if not in_motion and sum(motion_history) >= min_motion_frames_eff:
@@ -184,16 +183,7 @@ def run_detection(cmd, gpu: bool):
         clip_starts.append(current_start)
     clip_ends = [min(e, frames_read - 1) for e in clip_ends]
 
-    # Trailing dead-air trim: a final segment that runs to EOF (motion still
-    # flagged on the last frames) would keep an action-free tail. Cap it at the
-    # last frame with real motion plus the post-roll buffer. A resulting empty
-    # tail segment is dropped later by the duration filter (>0.5s).
-    if clip_ends and last_motion_frame > 0:
-        max_end = min(frames_read - 1, last_motion_frame + buffer_frames_eff)
-        if clip_ends[-1] > max_end:
-            clip_ends[-1] = max_end
-
-    return clip_starts, clip_ends, frames_read, proc.returncode, err_tail
+    return clip_starts, clip_ends, frames_read, proc.returncode, err_tail, motion_flags
 
 starts, ends, frames_read, rc, err_tail = [], [], 0, 1, ""
 
@@ -203,7 +193,7 @@ commands.append(build_ffmpeg_cmd(False))
 for use_gpu, cmd in zip([True, False] if GPU_AVAILABLE else [False], commands):
     if not use_gpu:
         print("[gpu] /dev/dri/card0 not available — CPU decode", file=sys.stderr)
-    starts, ends, frames_read, rc, err_tail = run_detection(cmd, use_gpu)
+    starts, ends, frames_read, rc, err_tail, motion_flags = run_detection(cmd, use_gpu)
     if frames_read == 0 or rc != 0:
         if use_gpu:
             print(f"[gpu] vaapi decode failed (rc={rc}), falling back to CPU", file=sys.stderr)
@@ -233,6 +223,37 @@ for s, e in segments:
     else:
         merged.append((s, e))
 segments = [(round(s, 2), round(e, 2)) for s, e in merged if (e - s) > 0.5]
+
+# Trailing dead-air trim on the FINAL segment. A highlight should end where real
+# (dense) motion ends — not be stretched toward EOF by a few isolated tail
+# bursts. Walk the end of the last segment backward and cut at the last frame
+# whose preceding ~3s window still carried meaningful motion density; a sparse,
+# mostly-quiet tail is dropped.
+if segments and len(motion_flags):
+    WINDOW = max(1, int(round(3.0 * det_fps)))      # ~3s of detection frames
+    MIN_ACTIVE = max(1, int(WINDOW * 0.40))         # >=40% of a 3s window = real action
+    prefix = [0] * (len(motion_flags) + 1)
+    for i, m in enumerate(motion_flags):
+        prefix[i + 1] = prefix[i] + (1 if m else 0)
+
+    def active_in_window(frame):
+        lo = max(0, frame - WINDOW + 1)
+        return prefix[frame + 1] - prefix[lo]
+
+    s0, e0 = segments[-1]
+    s_frame = int(round(s0 * det_fps))
+    e_frame = min(len(motion_flags) - 1, int(round(e0 * det_fps)))
+    cut = None
+    for f in range(e_frame, s_frame, -1):
+        if active_in_window(f) >= MIN_ACTIVE:
+            cut = f
+            break
+    if cut is not None:
+        new_end = round(cut / det_fps, 2)
+        if new_end - s0 > 0.5:
+            segments[-1] = (s0, new_end)
+        else:
+            segments.pop()
 
 total = sum(e - s for s, e in segments)
 print(f"[mog2+contour] {len(segments)} segs | {total:.1f}s total", file=sys.stderr)
