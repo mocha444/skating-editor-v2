@@ -15,6 +15,7 @@ export async function POST(req: Request) {
   const historyStr = form.get("history") as string;
   const varThreshold = form.get("var-threshold") as string;
   const detectShadows = form.get("detect-shadows") as string;
+  const keepSource = form.get("keep-source") as string;
 
   if (!dir || dir.includes("..") || dir.includes("/")) {
     return NextResponse.json({ error: "invalid dir" }, { status: 400 });
@@ -34,14 +35,14 @@ export async function POST(req: Request) {
     percent: 5,
     started: Date.now(),
     originalName: dir,
-    threshold: threshold || "0.003",
+    threshold: threshold || "0.0012",
     minContour: minContour || "50",
-    minMotionFrames: minMotionFrames || "8",
-    bufferFrames: bufferFrames || "60",
+    minMotionFrames: minMotionFrames || "12",
+    bufferFrames: bufferFrames || "20",
     history: historyStr || "300",
     varThreshold: varThreshold || "25",
     detectShadows: detectShadows || "false",
-    keepSource: "true",
+    keepSource: keepSource || "true",
   });
 
   return NextResponse.json({ ok: true, jobId, dir });

@@ -78,6 +78,7 @@ export interface JobDb {
   failJob(id: string, error: string, opts?: { maxAttempts?: number }): Job | null;
   resetRunningJobs(): void;
   listJobs(): Job[];
+  listJobsByDir(dir: string): Job[];
   deleteJob(id: string): void;
   countQueued(): number;
   jobLogPath(id: string): string;

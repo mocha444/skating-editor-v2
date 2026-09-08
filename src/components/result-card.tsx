@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 type Props = {
   result: Result;
   onProcessAnother: () => void;
+  /** Called the moment the user downloads the final video (used to skip the destructive confirm later). */
+  onDownloaded?: (dir?: string) => void;
 };
 
 function fmt(s?: number) {
@@ -32,7 +34,7 @@ function clamp(v: number, lo: number, hi: number) {
   return Math.min(hi, Math.max(lo, v));
 }
 
-export function ResultCard({ result, onProcessAnother }: Props) {
+export function ResultCard({ result, onProcessAnother, onDownloaded }: Props) {
   const clip = result.segments === 1 ? "clip" : "clips";
   const downloadUrl = `/api/download/${result.jobId}`;
 
@@ -210,7 +212,11 @@ export function ResultCard({ result, onProcessAnother }: Props) {
             Open full video
             <ExternalLink className="ml-1 inline size-3.5" aria-hidden />
           </a>
-          <a href={downloadUrl} className={cn(buttonVariants({ variant: "default" }))}>
+          <a
+            href={downloadUrl}
+            onClick={() => onDownloaded?.(result.dir)}
+            className={cn(buttonVariants({ variant: "default" }))}
+          >
             <Download aria-hidden />
             Download video
           </a>

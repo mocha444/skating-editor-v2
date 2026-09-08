@@ -243,6 +243,11 @@ function listJobs() {
   return getDb().prepare("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 200").all().map(rowToJob);
 }
 
+/** All job rows that reference a given upload dir (oldest first). */
+function listJobsByDir(dir) {
+  return getDb().prepare("SELECT * FROM jobs WHERE dir = ? ORDER BY created_at ASC").all(dir).map(rowToJob);
+}
+
 function deleteJob(id) {
   getDb().prepare("DELETE FROM jobs WHERE id = ?").run(id);
 }
@@ -295,6 +300,7 @@ module.exports = {
   failJob,
   resetRunningJobs,
   listJobs,
+  listJobsByDir,
   deleteJob,
   countQueued,
   jobLogPath,

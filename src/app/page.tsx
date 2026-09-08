@@ -4,12 +4,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
 
 import { UploadZone } from "@/components/upload-zone";
+import { SystemTemps } from "@/components/system-temps";
 import { RecentList } from "@/components/recent-list";
 import { ProgressPanel } from "@/components/progress-panel";
 import { LogPanel } from "@/components/log-panel";
 import { ResultCard } from "@/components/result-card";
 import { AdvancedSettings } from "@/components/advanced-settings";
 import { Button } from "@/components/ui/button";
+import { DiscardDialog } from "@/components/discard-dialog";
 import { appendSettings } from "@/lib/editor-types";
 import { uploadFormData } from "@/lib/upload-video";
 import { computeFileSig, computeFileHash } from "@/lib/client-hash";
@@ -54,6 +56,46 @@ export default function Page() {
     refreshRecent();
   }, [refreshRecent]);
 
+  // ---- Discard-after-done lifecycle -------------------------------------
+  // A finished job's dir stays on disk until the user leaves it behind. If the
+  // final video was downloaded, the next action cleans it up silently; if not,
+  // we ask first — there's no going back.
+  const [downloadedDirs, setDownloadedDirs] = useState<Set<string>>(new Set());
+  const [pendingAction, setPendingAction] = useState<
+    | { kind: "reset" }
+    | { kind: "upload"; file: File }
+    | { kind: "reprocess"; dir: string }
+    | null
+  >(null);
+  const [discard, setDiscard] = useState<{ mode: "discard" | "replace"; name: string } | null>(null);
+
+  const currentDir = status === "done" ? (result?.dir ?? null) : null;
+
+  const deleteDir = useCallback(async (dir: string) => {
+    try {
+      const fd = new FormData();
+      fd.append("dir", dir);
+      await fetch("/api/delete", { method: "POST", body: fd });
+    } catch {}
+  }, []);
+
+  const videoLabel = useCallback(
+    (dir: string | null | undefined) => {
+      if (!dir) return "this video";
+      return recent.find((r) => r.dir === dir)?.originalName || dir;
+    },
+    [recent]
+  );
+
+  const markDownloaded = useCallback((dir?: string) => {
+    if (!dir) return;
+    setDownloadedDirs((prev) => {
+      const next = new Set(prev);
+      next.add(dir);
+      return next;
+    });
+  }, []);
+
   function appendLog(line: string) {
     setLogs((prev) => [...prev, line]);
   }
@@ -69,13 +111,76 @@ export default function Page() {
     setError("");
   }
 
-  function onFileSelected(f: File) {
+  // Apply a newly selected file to the UI (idle state, fresh logs).
+  function selectFileNow(f: File) {
     closeStream();
     setFile(f);
     setStatus("idle");
     setResult(null);
     setError("");
     setLogs([`File selected: ${f.name} (${fmtBytes(f.size)})`]);
+  }
+
+  function handleFileSelected(f: File) {
+    // Picking a new file abandons the finished result that's on screen.
+    if (currentDir) {
+      if (!downloadedDirs.has(currentDir)) {
+        setPendingAction({ kind: "upload", file: f });
+        setDiscard({ mode: "discard", name: videoLabel(currentDir) });
+        return;
+      }
+      void deleteDir(currentDir).then(() => refreshRecent());
+    }
+    selectFileNow(f);
+  }
+
+  // "Process another" from the result card abandons the finished result.
+  function requestProcessAnother() {
+    if (!currentDir) {
+      resetState();
+      return;
+    }
+    if (!downloadedDirs.has(currentDir)) {
+      setPendingAction({ kind: "reset" });
+      setDiscard({ mode: "discard", name: videoLabel(currentDir) });
+      return;
+    }
+    void deleteDir(currentDir).then(() => {
+      refreshRecent();
+      resetState();
+    });
+  }
+
+  function cancelDiscard() {
+    setPendingAction(null);
+    setDiscard(null);
+  }
+
+  async function confirmDiscard() {
+    const action = pendingAction;
+    setPendingAction(null);
+    setDiscard(null);
+    if (!action) return;
+
+    if (action.kind === "upload") {
+      // Delete the abandoned result first (user accepted the risk), then bring
+      // in the newly selected file.
+      if (currentDir) await deleteDir(currentDir);
+      refreshRecent();
+      selectFileNow(action.file);
+      return;
+    }
+    if (action.kind === "reset") {
+      if (currentDir) await deleteDir(currentDir);
+      refreshRecent();
+      resetState();
+      return;
+    }
+    // Reprocess of the current dir: input stays, old output is purged once the
+    // replacement finishes.
+    if (action.kind === "reprocess") {
+      doReProcess(action.dir);
+    }
   }
 
   function openStream(jobId: string) {
@@ -173,7 +278,7 @@ export default function Page() {
     }
   }
 
-  async function onReProcess(dir: string) {
+  async function doReProcess(dir: string) {
     setError("");
     setLogs([`Re-processing ${dir}…`]);
     try {
@@ -190,12 +295,26 @@ export default function Page() {
     }
   }
 
+  // Re-process can target ANY recent row. Only re-running the CURRENT (on-screen)
+  // result discards a not-yet-downloaded edit, so gate just that case.
+  function onReProcess(dir: string) {
+    if (dir === currentDir && !downloadedDirs.has(dir)) {
+      setPendingAction({ kind: "reprocess", dir });
+      setDiscard({ mode: "replace", name: videoLabel(dir) });
+      return;
+    }
+    doReProcess(dir);
+  }
+
   async function onDelete(dir: string) {
     try {
       const fd = new FormData();
       fd.append("dir", dir);
       await fetch("/api/delete", { method: "POST", body: fd });
       refreshRecent();
+      // The currently displayed result may have been deleted from Recent — if
+      // so, drop its (now broken) result panel too.
+      if (dir === currentDir) resetState();
     } catch {}
   }
 
@@ -210,11 +329,13 @@ export default function Page() {
         <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Skating Editor</h1>
       </header>
 
+      <SystemTemps />
+
       <UploadZone
         file={file}
         busy={isBusy}
         hashing={status === "hashing"}
-        onFileSelected={onFileSelected}
+        onFileSelected={handleFileSelected}
         onClear={resetState}
       />
 
@@ -245,9 +366,19 @@ export default function Page() {
         <LogPanel logs={logs} autoScroll={autoScroll} onToggleAutoScroll={setAutoScroll} onAppendLog={appendLog} />
       )}
 
-      {status === "done" && result && <ResultCard result={result} onProcessAnother={resetState} />}
+      {status === "done" && result && (
+        <ResultCard result={result} onProcessAnother={requestProcessAnother} onDownloaded={markDownloaded} />
+      )}
 
       <RecentList items={recent} busy={isBusy} onReProcess={onReProcess} onDelete={onDelete} />
+
+      <DiscardDialog
+        open={discard != null}
+        mode={discard?.mode ?? "discard"}
+        name={discard?.name ?? "this video"}
+        onCancel={cancelDiscard}
+        onConfirm={() => void confirmDiscard()}
+      />
     </main>
   );
 }

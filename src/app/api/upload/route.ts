@@ -95,10 +95,10 @@ async function findDuplicateHash(hashHex: string, excludeId: string): Promise<st
 
 function settingsFrom(headers: Headers): Record<string, string> {
   return {
-    threshold: headers.get("x-threshold") || "0.003",
+    threshold: headers.get("x-threshold") || "0.0012",
     minContour: headers.get("x-min-contour") || "50",
-    minMotionFrames: headers.get("x-min-motion-frames") || "8",
-    bufferFrames: headers.get("x-buffer-frames") || "60",
+    minMotionFrames: headers.get("x-min-motion-frames") || "12",
+    bufferFrames: headers.get("x-buffer-frames") || "20",
     history: headers.get("x-history") || "300",
     varThreshold: headers.get("x-var-threshold") || "25",
     detectShadows: headers.get("x-detect-shadows") || "false",

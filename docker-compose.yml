@@ -9,6 +9,10 @@ services:
     - DATA_DIR=/app/data
     volumes:
     - media_data:/app/data
+    # Read-only host sensors so the /api/temps route can show live CPU/GPU stats
+    - /sys/class/thermal:/sys/class/thermal:ro
+    - /sys/class/hwmon:/sys/class/hwmon:ro
+    - /sys/class/drm:/sys/class/drm:ro
     restart: unless-stopped
   worker:
     build: .

@@ -2,6 +2,7 @@ export type Status = "idle" | "hashing" | "uploading" | "processing" | "done" | 
 
 export type Result = {
   jobId: string;
+  dir?: string;
   segments: number;
   duration: number;
   sourceDuration?: number;

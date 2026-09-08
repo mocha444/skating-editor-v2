@@ -22,6 +22,8 @@ const {
   failJob,
   resetRunningJobs,
   jobLogPath,
+  listJobsByDir,
+  deleteJob,
   updateRecentDuration,
 } = require("./jobs-db.cjs");
 const RESULTS_DIR = path.join(DATA_DIR, "results");
@@ -105,6 +107,9 @@ async function processJob(job) {
   const inPath = job.inPath;
   const segDir = job.segDir;
   mkdirSyncProject();
+  // Clear any stale segment files from a previous run on the same dir, then
+  // start fresh (reprocesses reuse dir/input but must not leak old seg-N.mp4).
+  fs.rmSync(segDir, { recursive: true, force: true });
   fs.mkdirSync(segDir, { recursive: true });
 
   update(id, { stage: "detect", percent: 30 });
@@ -152,17 +157,33 @@ async function processJob(job) {
   const duration = (await ffprobeDuration(finalPath)) ?? nominal;
 
   const result = {
-    ok: true, jobId: id, segments: segments.length, duration,
+    ok: true, jobId: id, dir: job.dir, segments: segments.length, duration,
     sourceDuration: typeof parsed.source_duration === "number" && parsed.source_duration > 0
       ? parsed.source_duration
       : duration,
     finalUrl: `/results/skating_final_${id}.mp4`,
     rawSegments: segments,
     segDurations,
-    segUrls: segFiles.map((f, i) => `/uploads/skate-${id}/segments/seg-${i}.mp4`),
+    // Segments physically live under the upload DIR (uploads/<dir>/segments),
+    // which for reprocesses differs from the job id — address them by dir.
+    segUrls: segFiles.map((f, i) => `/uploads/${/^skate-[0-9a-zA-Z]{6,16}$/.test(job.dir) ? job.dir : `skate-${id}`}/segments/seg-${i}.mp4`),
   };
   completeJob(id, result, now());
   updateRecentDuration(job.dir || `skate-${id}`, duration);
+
+  // A dir maps 1:1 to its LATEST completed output. Reprocessing a dir makes
+  // every older finished job for it stale — drop their rows, logs and final
+  // files so nothing orphaned lingers (the new result is already written).
+  try {
+    for (const old of listJobsByDir(job.dir || `skate-${id}`)) {
+      if (old.id === id || old.status !== "done") continue;
+      try { fs.rmSync(path.join(RESULTS_DIR, `skating_final_${old.id}.mp4`), { force: true }); } catch {}
+      try { fs.rmSync(jobLogPath(old.id), { force: true }); } catch {}
+      deleteJob(old.id);
+    }
+  } catch (e) {
+    appendLog(id, `[cleanup] superseded-job purge skipped: ${(e && e.message) || e}`);
+  }
 
   // Disk management: optionally free the large original file once processing is
   // done (user opted in via settings). Keeps the result + segments.
