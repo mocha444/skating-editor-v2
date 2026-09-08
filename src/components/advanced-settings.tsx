@@ -48,7 +48,7 @@ const labelMap: Record<string, string> = {
   "Detect shadows": "detectShadows",
 };
 
-function Hint({ label, hint, children }: { label: string; hint: string; children: React.ReactNode }) {
+function Hint({ label, hint, children }: { label: string; hint: string; children?: React.ReactNode }) {
   const wrapRef = useRef<HTMLSpanElement>(null);
   const [hover, setHover] = useState(false);
   const [pinned, setPinned] = useState(false);
@@ -127,8 +127,8 @@ function NumberField({
   onValue: (v: string) => void;
 }) {
   return (
-    <div className="flex flex-col gap-1 text-xs">
-      <span className="flex items-center gap-1">
+    <div className="flex min-w-0 flex-col gap-1 text-xs">
+      <span className="flex items-center justify-between gap-1">
         <Hint label={label} hint={hint}>{label}</Hint>
         <ResetButton label={label} onReset={() => onValue(DEFAULT_SETTINGS[labelMap[label] as keyof DetectionSettings])} />
       </span>
@@ -235,46 +235,55 @@ export function AdvancedSettings({ settings, onChange }: Props) {
               hint={HINTS.varThreshold}
               onValue={(v) => onChange({ varThreshold: v })}
             />
-            <div className="flex items-end gap-2 text-xs">
-              <input
-                id="detect-shadows"
-                type="checkbox"
-                checked={settings.detectShadows === "true"}
-                onChange={(e) => onChange({ detectShadows: String(e.target.checked) })}
-                className="size-4 accent-amber-400"
-              />
+            {/* Checkbox rows deliberately keep buttons OUTSIDE the <label> so
+                clicking “Reset” or the info icon never accidentally toggles it. */}
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <label
                 htmlFor="detect-shadows"
-                className="flex cursor-pointer items-center gap-1 font-medium text-muted-foreground"
+                className="flex cursor-pointer items-center gap-1.5 font-medium text-muted-foreground"
               >
-              <Hint label="Detect shadows" hint={HINTS.detectShadows}>
-                  Detect shadows
-                </Hint>
-                <button
-                  type="button"
-                  onClick={() => onChange({ detectShadows: DEFAULT_SETTINGS.detectShadows })}
-                  aria-label="Reset Detect shadows to default"
-                  className="inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/60 outline-none transition-colors hover:bg-muted hover:text-amber-400 focus-visible:ring-2 focus-visible:ring-ring/50"
-                >
-                  <RotateCcw className="size-3" aria-hidden />
-                </button>
+                <input
+                  id="detect-shadows"
+                  type="checkbox"
+                  checked={settings.detectShadows === "true"}
+                  onChange={(e) => onChange({ detectShadows: String(e.target.checked) })}
+                  className="size-4 accent-amber-400"
+                />
+                Detect shadows
               </label>
+              <span className="flex items-center gap-1">
+                <Hint label="Detect shadows" hint={HINTS.detectShadows} />
+                <ResetButton
+                  label="Detect shadows"
+                  onReset={() => onChange({ detectShadows: DEFAULT_SETTINGS.detectShadows })}
+                />
+              </span>
             </div>
-            <div className="flex items-end gap-2 text-xs">
-              <input
-                id="keep-source"
-                type="checkbox"
-                checked={settings.keepSource !== "true"}
-                onChange={(e) => onChange({ keepSource: String(!e.target.checked) })}
-                className="size-4 shrink-0 accent-amber-400"
-              />
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <label
                 htmlFor="keep-source"
-                className="cursor-pointer font-medium text-muted-foreground"
+                className="flex cursor-pointer items-center gap-1.5 font-medium text-muted-foreground"
                 title="After processing, delete the large original file to save disk space. Reprocessing this video later will require re-uploading it."
               >
-                Delete original after processing
+                <input
+                  id="keep-source"
+                  type="checkbox"
+                  checked={settings.keepSource !== "true"}
+                  onChange={(e) => onChange({ keepSource: String(!e.target.checked) })}
+                  className="size-4 accent-amber-400"
+                />
+                <span>Delete original after processing</span>
               </label>
+              <span className="flex items-center gap-1">
+                <Hint
+                  label="Delete original after processing"
+                  hint="After processing, delete the large original file from the server to save disk space. Reprocessing this video later will require re-uploading it."
+                />
+                <ResetButton
+                  label="Delete original after processing"
+                  onReset={() => onChange({ keepSource: DEFAULT_SETTINGS.keepSource })}
+                />
+              </span>
             </div>
           </div>
         </TooltipProvider>

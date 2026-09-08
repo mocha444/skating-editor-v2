@@ -11,7 +11,7 @@ type Temps = {
 const HISTORY = 40; // ~2 minutes at a 3s poll
 
 function tempColor(t: number | null): string {
-  if (t == null) return "text-zinc-500";
+  if (t == null) return "text-muted-foreground/70";
   if (t < 60) return "text-emerald-400";
   if (t < 80) return "text-amber-400";
   return "text-red-400";
@@ -94,10 +94,10 @@ export function SystemTemps() {
     gpu?.freqMhz != null && gpu?.maxFreqMhz != null ? `${gpu.freqMhz}/${gpu.maxFreqMhz} MHz` : null;
 
   return (
-    <div className="flex w-full max-w-2xl flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3 text-sm">
+    <div className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-border bg-card/60 px-4 py-2.5 text-sm">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
         <div className="flex items-center gap-2">
-          <Cpu className="size-4 text-zinc-400" aria-hidden />
+          <Cpu className="size-4 text-muted-foreground" aria-hidden />
           <span className={`text-sm font-semibold tabular-nums ${tempColor(pkg)}`}>
             {pkg != null ? `${pkg}°C` : "–"}
           </span>
@@ -115,23 +115,23 @@ export function SystemTemps() {
         )}
 
         <div className="flex items-center gap-2" title="GPU busy % from rc6 residency · clock frequency">
-          <CircuitBoard className="size-4 text-zinc-400" aria-hidden />
+          <CircuitBoard className="size-4 text-muted-foreground" aria-hidden />
           {gpuBusy == null ? (
-            <span className="text-sm font-semibold text-zinc-500">GPU n/a</span>
+            <span className="text-sm font-semibold text-muted-foreground/70">GPU n/a</span>
           ) : gpuBusy <= 0 ? (
-            <span className="text-sm font-semibold text-zinc-500">GPU idle</span>
+            <span className="text-sm font-semibold text-muted-foreground/70">GPU idle</span>
           ) : (
             <span className={`text-sm font-semibold tabular-nums ${loadColor(gpuBusy)}`}>GPU {gpuBusy}%</span>
           )}
           {freqLabel && (
-            <span className="text-[10px] tabular-nums text-zinc-500" title="Actual / max clock (not load)">
+            <span className="text-[10px] tabular-nums text-muted-foreground/70" title="Actual / max clock (not load)">
               {freqLabel}
             </span>
           )}
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-[11px] text-zinc-500">
+      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
         <span className="tabular-nums">
           CPU <span className={`font-semibold ${loadColor(cpuLoad)}`}>{cpuLoad}%</span>
         </span>

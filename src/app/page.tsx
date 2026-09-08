@@ -324,9 +324,14 @@ export default function Page() {
 
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-6 px-4 py-8 pb-20 sm:px-6">
-      <header className="relative mt-2 flex items-center justify-center gap-3">
-        <Camera className="size-8 text-amber-400" aria-hidden />
-        <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Skating Editor</h1>
+      <header className="relative mt-2 flex flex-col items-center gap-1.5 text-center">
+        <div className="flex items-center gap-3">
+          <Camera className="size-8 text-amber-400" aria-hidden />
+          <h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">Skating Editor</h1>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Cut the dead air out of your skate videos — automatically.
+        </p>
       </header>
 
       <SystemTemps />

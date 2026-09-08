@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { RefreshCw, Trash2, AlertTriangle, X } from "lucide-react";
+import { ChevronDown, RefreshCw, Trash2, AlertTriangle, X } from "lucide-react";
 import type { RecentItem } from "@/lib/editor-types";
 import { Button } from "@/components/ui/button";
 
@@ -17,17 +17,29 @@ export function RecentList({ items, busy, onReProcess, onDelete }: Props) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="rounded-xl border border-border bg-card overflow-hidden">
+    <section className="overflow-hidden rounded-xl border border-border bg-card">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between px-3 py-2.5 text-sm font-bold text-muted-foreground hover:bg-muted/40 transition-colors"
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-sm font-bold text-muted-foreground transition-colors hover:bg-muted/40"
       >
-        <span>Most Recent Upload{items.length === 1 ? "" : "s"} ({items.length})</span>
-        <span className={`text-xs transition-transform ${open ? "rotate-180" : ""}`}>▼</span>
+        <span className="truncate">
+          Recent uploads
+          {items.length > 0 && <span className="font-normal text-muted-foreground/70"> ({items.length})</span>}
+        </span>
+        <ChevronDown
+          className={`size-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          aria-hidden
+        />
       </button>
-      {open && (
-        <div className="space-y-1.5 px-3 pb-3">
+      {open &&
+        (items.length === 0 ? (
+          <p className="border-t border-border px-4 py-6 text-center text-sm text-muted-foreground">
+            Nothing here yet — your finished edits will show up in this list.
+          </p>
+        ) : (
+          <div className="space-y-1.5 px-3 pb-3">
           {items.map((r) => (
             <article
               key={r.dir}
@@ -106,7 +118,7 @@ export function RecentList({ items, busy, onReProcess, onDelete }: Props) {
             </article>
           ))}
         </div>
-      )}
-    </div>
+        ))}
+    </section>
   );
 }
