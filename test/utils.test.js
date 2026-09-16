@@ -1,7 +1,7 @@
 // @ts-check
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { fmtBytes, fmtSpeed, appendSettings, DEFAULT_SETTINGS } = require("../src/lib/editor-types.ts");
+const { fmtBytes, fmtSpeed, DEFAULT_SETTINGS } = require("../src/lib/editor-types.ts");
 
 test("fmtBytes handles small numbers", () => {
   assert.equal(fmtBytes(0), "0 B");
@@ -32,18 +32,5 @@ test("fmtSpeed formats valid rate", () => {
 test("DEFAULT_SETTINGS has all fields", () => {
   for (const k of ["threshold","minContour","minMotionFrames","bufferFrames","history","varThreshold","detectShadows"]) {
     assert.ok(k in DEFAULT_SETTINGS, `missing ${k}`);
-  }
-});
-
-test("appendSettings writes all fields", () => {
-  const fd = new FormData ?? null;
-  if (typeof FormData === "undefined") {
-    // Node 18+ has global FormData (undici). Skip if unavailable.
-    return;
-  }
-  const fd2 = new FormData();
-  appendSettings(fd2, DEFAULT_SETTINGS);
-  for (const k of ["threshold","min-contour","min-motion-frames","buffer-frames","history","var-threshold","detect-shadows"]) {
-    assert.ok(fd2.has(k), `missing form field ${k}`);
   }
 });

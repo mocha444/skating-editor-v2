@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
 import { createHash } from "crypto";
 import { createWriteStream, mkdirSync, rmSync, writeFileSync } from "fs";
-import { mkdir, open, readdir, readFile } from "fs/promises";
+import { mkdir, open, readdir, readFile, stat } from "fs/promises";
 import path from "path";
 import { UPLOADS_DIR, newJobId } from "@/lib/storage";
 import { db } from "@/lib/jobs";
@@ -25,6 +25,46 @@ type SessionMeta = {
 
 const sessionFile = (uploadId: string) => path.join(SESSIONS_DIR, uploadId, "manifest.json");
 const chunkFile = (uploadId: string, index: number) => path.join(SESSIONS_DIR, uploadId, "chunks", String(index));
+
+/** A session counts as in-flight if it was touched within this window. */
+const ACTIVE_SESSION_MS = 10 * 60 * 1000;
+
+/**
+ * Id of another upload session that is still active, if any.
+ *
+ * Admission guard: `excludeId` is the caller's own session, so resuming the SAME
+ * file is always allowed — only a second, different upload is refused. That is
+ * what enforces "one upload at a time" without blocking legitimate resume.
+ */
+async function activeOtherSession(excludeId: string): Promise<string | null> {
+  let names: string[];
+  try {
+    names = await readdir(SESSIONS_DIR);
+  } catch {
+    return null;
+  }
+  const now = Date.now();
+  for (const name of names) {
+    if (name === excludeId || name.startsWith(".")) continue;
+    try {
+      const st = await stat(path.join(SESSIONS_DIR, name));
+      if (now - st.mtimeMs < ACTIVE_SESSION_MS) return name;
+    } catch {}
+  }
+  return null;
+}
+
+/** A video is already uploading or processing — refuse to start another. */
+function busyResponse() {
+  const active = db.getActiveJob();
+  return NextResponse.json(
+    {
+      error: "A video is already being processed. Wait for it to finish before starting another.",
+      activeJobId: active ? active.id : undefined,
+    },
+    { status: 409 }
+  );
+}
 
 async function readSession(uploadId: string): Promise<SessionMeta | null> {
   try {
@@ -102,7 +142,6 @@ function settingsFrom(headers: Headers): Record<string, string> {
     history: headers.get("x-history") || "300",
     varThreshold: headers.get("x-var-threshold") || "25",
     detectShadows: headers.get("x-detect-shadows") || "false",
-    keepSource: headers.get("x-keep-source") || "true",
   };
 }
 
@@ -160,6 +199,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "bad chunk request" }, { status: 400 });
     }
 
+    // One upload at a time (the caller's own session, i.e. a resume, is exempt).
+    const busy = await activeOtherSession(uploadId);
+    if (busy) {
+      return NextResponse.json(
+        { error: "Another upload is already in progress. Wait for it to finish." },
+        { status: 409 }
+      );
+    }
+
     const form = await req.formData();
     const chunk = form.get("chunk") as Blob | null;
     if (!chunk) return NextResponse.json({ error: "no chunk" }, { status: 400 });
@@ -182,6 +230,9 @@ export async function POST(req: NextRequest) {
     if (!uploadId || uploadId.includes("..") || uploadId.includes("/")) {
       return NextResponse.json({ error: "bad uploadId" }, { status: 400 });
     }
+
+    // One job at a time: refuse to enqueue while something is still in flight.
+    if (db.getActiveJob()) return busyResponse();
     const meta = await readSession(uploadId);
     if (!meta) return NextResponse.json({ error: "no upload session" }, { status: 400 });
 
@@ -235,14 +286,9 @@ export async function POST(req: NextRequest) {
       started: Date.now(), originalName: fileName,
       threshold: s.threshold, minContour: s.minContour, minMotionFrames: s.minMotionFrames,
       bufferFrames: s.bufferFrames, history: s.history, varThreshold: s.varThreshold,
-      detectShadows: s.detectShadows, keepSource: s.keepSource,
+      detectShadows: s.detectShadows,
     });
 
-    db.addRecent({
-      dir: `skate-${chunkId}`, hash: hashHex, originalName: fileName, duration: 0, uploadedAt: Date.now(),
-    });
-
-    // Clean up the temp session.
     rmSync(path.join(SESSIONS_DIR, uploadId), { recursive: true, force: true });
 
     return NextResponse.json({ ok: true, jobId: chunkId, dir: `skate-${chunkId}`, complete: true, hash: hashHex });

@@ -15,10 +15,21 @@ export async function POST(req: Request) {
   const historyStr = form.get("history") as string;
   const varThreshold = form.get("var-threshold") as string;
   const detectShadows = form.get("detect-shadows") as string;
-  const keepSource = form.get("keep-source") as string;
 
   if (!dir || dir.includes("..") || dir.includes("/")) {
     return NextResponse.json({ error: "invalid dir" }, { status: 400 });
+  }
+
+  // One job at a time — same guard as the upload path.
+  const active = db.getActiveJob();
+  if (active) {
+    return NextResponse.json(
+      {
+        error: "A video is already being processed. Wait for it to finish before starting another.",
+        activeJobId: active.id,
+      },
+      { status: 409 }
+    );
   }
 
   const jobId = newJobId();
@@ -42,7 +53,6 @@ export async function POST(req: Request) {
     history: historyStr || "300",
     varThreshold: varThreshold || "25",
     detectShadows: detectShadows || "false",
-    keepSource: keepSource || "true",
   });
 
   return NextResponse.json({ ok: true, jobId, dir });

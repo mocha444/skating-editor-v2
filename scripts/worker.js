@@ -24,7 +24,6 @@ const {
   jobLogPath,
   listJobsByDir,
   deleteJob,
-  updateRecentDuration,
 } = require("./jobs-db.cjs");
 const RESULTS_DIR = path.join(DATA_DIR, "results");
 const UPLOADS_DIR = path.join(DATA_DIR, "uploads");
@@ -49,8 +48,41 @@ function mkdirSyncProject() {
   fs.mkdirSync(RESULTS_DIR, { recursive: true });
 }
 
-function ffprobeDuration(mediaPath) {
+/**
+ * The keyframe ffmpeg's `-ss S -i ... -c copy` actually starts a segment at:
+ * the greatest keyframe <= S. Stream copy cannot begin mid-GOP, so this is the
+ * first frame in the cut file. Probing is cheap — `-skip_frame nokey` drops
+ * non-keyframes at the demuxer, so nothing is decoded (fast even on 4K).
+ *
+ * Returns null if the probe fails, in which case the caller falls back to S.
+ */
+function keyframeAtOrBefore(inPath, t) {
   return new Promise((resolve) => {
+    const from = Math.max(0, t - 3);
+    const p = spawn("ffprobe", [
+      "-v", "error",
+      "-select_streams", "v:0",
+      "-skip_frame", "nokey",
+      "-show_entries", "frame=pts_time",
+      "-of", "csv=p=0",
+      "-read_intervals", `${from.toFixed(3)}%+6`,
+      inPath,
+    ]);
+    let out = "";
+    p.stdout.on("data", (d) => (out += d.toString()));
+    p.on("error", () => resolve(null));
+    p.on("close", () => {
+      const times = out
+        .split("\n")
+        .map((v) => parseFloat(v.trim()))
+        .filter((v) => Number.isFinite(v));
+      const before = times.filter((v) => v <= t);
+      resolve(before.length ? Math.max(...before) : null);
+    });
+  });
+}
+
+function ffprobeDuration(mediaPath) {  return new Promise((resolve) => {
     const p = spawn("ffprobe", ["-v", "error", "-select_streams", "v:0",
       "-show_entries", "stream=duration",
       "-of", "default=noprint_wrappers=1:nokey=1", mediaPath]);
@@ -126,22 +158,33 @@ async function processJob(job) {
   if (detectShadows === "true") detectArgs.push("--detect-shadows");
 
   const parsed = await runPython(path.join(__dirname, "process_video.py"), [...detectArgs], id);
-  const segments = parsed.segments || [];
+  const rawSegments = parsed.segments || [];
+  // Drop sub-0.5s blips BEFORE cutting so rawSegments, segDurations,
+  // actualSegments and segUrls all share one index space — the UI and the
+  // download trim address clips by that index.
+  const segments = rawSegments.filter(([s, e]) => e - s >= 0.5);
   if (!segments.length) throw new Error("no motion detected");
   update(id, { stage: "detect_done", percent: 60 });
   appendLog(id, `[mog2] Found ${segments.length} segments`);
 
   const segFiles = [];
   const segDurations = [];
+  const actualSegments = [];
   for (let i = 0; i < segments.length; i++) {
     const [s, e] = segments[i];
-    if (e - s < 0.5) continue;
     update(id, { percent: 60 + Math.round((20 * (i + 1)) / segments.length) });
     const f = path.join(segDir, `seg-${i}.mp4`);
-    appendLog(id, `[cut] ${i + 1}/${segments.length} ${s.toFixed(2)}s → ${e.toFixed(2)}s`);
+    // With `-ss S -c copy` ffmpeg begins the segment at the keyframe at/before
+    // S, not at S — so the clip on disk is longer than the detected window.
+    // Probe that keyframe so the UI can report the range actually present in
+    // the edit instead of the nominal detection window.
+    const actualStart = (await keyframeAtOrBefore(inPath, s)) ?? s;
+    appendLog(id, `[cut] ${i + 1}/${segments.length} ${s.toFixed(2)}s → ${e.toFixed(2)}s (keyframe ${actualStart.toFixed(2)}s)`);
     await runFfmpeg(["-y", "-ss", String(s), "-i", inPath, "-t", String(e - s), "-c", "copy", "-avoid_negative_ts", "make_zero", f], id, "cut");
     segFiles.push(f);
-    segDurations.push((await ffprobeDuration(f)) ?? (e - s));
+    const dur = (await ffprobeDuration(f)) ?? (e - s);
+    segDurations.push(dur);
+    actualSegments.push([actualStart, actualStart + dur]);
   }
 
   update(id, { stage: "concat", percent: 90 });
@@ -164,12 +207,15 @@ async function processJob(job) {
     finalUrl: `/results/skating_final_${id}.mp4`,
     rawSegments: segments,
     segDurations,
+    // The range each clip ACTUALLY covers in the source, i.e. after ffmpeg's
+    // keyframe seek. rawSegments stays as the detected window for reference.
+    actualSegments,
     // Segments physically live under the upload DIR (uploads/<dir>/segments),
     // which for reprocesses differs from the job id — address them by dir.
-    segUrls: segFiles.map((f, i) => `/uploads/${/^skate-[0-9a-zA-Z]{6,16}$/.test(job.dir) ? job.dir : `skate-${id}`}/segments/seg-${i}.mp4`),
+    // basename() preserves the on-disk numbering so trims resolve exactly.
+    segUrls: segFiles.map((f) => `/uploads/${/^skate-[0-9a-zA-Z]{6,16}$/.test(job.dir) ? job.dir : `skate-${id}`}/segments/${path.basename(f)}`),
   };
   completeJob(id, result, now());
-  updateRecentDuration(job.dir || `skate-${id}`, duration);
 
   // A dir maps 1:1 to its LATEST completed output. Reprocessing a dir makes
   // every older finished job for it stale — drop their rows, logs and final
@@ -183,17 +229,6 @@ async function processJob(job) {
     }
   } catch (e) {
     appendLog(id, `[cleanup] superseded-job purge skipped: ${(e && e.message) || e}`);
-  }
-
-  // Disk management: optionally free the large original file once processing is
-  // done (user opted in via settings). Keeps the result + segments.
-  if (job.keepSource !== "true") {
-    try {
-      fs.rmSync(inPath, { force: true });
-      appendLog(id, "[cleanup] Removed original source file (keep source off)");
-    } catch (e) {
-      appendLog(id, `[cleanup] Could not remove source: ${(e && e.message) || e}`);
-    }
   }
 
   appendLog(id, "[done] Final video ready");

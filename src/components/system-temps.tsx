@@ -12,29 +12,29 @@ const HISTORY = 40; // ~2 minutes at a 3s poll
 
 function tempColor(t: number | null): string {
   if (t == null) return "text-muted-foreground/70";
-  if (t < 60) return "text-emerald-400";
-  if (t < 80) return "text-amber-400";
-  return "text-red-400";
+  if (t < 60) return "text-chart-2";
+  if (t < 80) return "text-chart-3";
+  return "text-destructive";
 }
 
 function loadColor(l: number): string {
-  if (l < 40) return "text-sky-400";
-  if (l < 75) return "text-amber-400";
-  return "text-red-400";
+  if (l < 40) return "text-primary";
+  if (l < 75) return "text-chart-3";
+  return "text-destructive";
 }
 
 function tempHex(t: number | null): string {
-  if (t == null) return "#71717a";
-  if (t < 60) return "#34d399"; // emerald-400
-  if (t < 80) return "#fbbf24"; // amber-400
-  return "#f87171"; // red-400
+  if (t == null) return "var(--muted-foreground)";
+  if (t < 60) return "var(--chart-2)";
+  if (t < 80) return "var(--chart-3)";
+  return "var(--destructive)";
 }
 
 function Sparkline({ data, color }: { data: number[]; color: string }) {
-  const w = 72;
-  const h = 20;
+  const w = 56;
+  const h = 14;
   if (data.length < 2) {
-    return <span className="inline-block h-[20px] w-[72px]" />;
+    return <span className="inline-block h-[14px] w-[56px]" />;
   }
   const min = Math.min(...data);
   const max = Math.max(...data);
@@ -90,52 +90,33 @@ export function SystemTemps() {
   const pkg = cpu?.package ?? null;
   const cpuLoad = cpu?.load ?? 0;
   const gpuBusy = gpu?.busy ?? null;
-  const freqLabel =
-    gpu?.freqMhz != null && gpu?.maxFreqMhz != null ? `${gpu.freqMhz}/${gpu.maxFreqMhz} MHz` : null;
 
   return (
-    <div className="flex w-full flex-wrap items-center justify-between gap-x-4 gap-y-2 rounded-xl border border-border bg-card/60 px-4 py-2.5 text-sm">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
-        <div className="flex items-center gap-2">
-          <Cpu className="size-4 text-muted-foreground" aria-hidden />
-          <span className={`text-sm font-semibold tabular-nums ${tempColor(pkg)}`}>
-            {pkg != null ? `${pkg}°C` : "–"}
-          </span>
-          {history.length > 0 && <Sparkline data={history} color={tempHex(pkg)} />}
-        </div>
+    <div className="flex w-full flex-wrap items-center gap-x-1 gap-y-0 rounded-lg border border-border bg-card/60 px-2 py-1 text-xs">
+      <span className="tabular-nums text-muted-foreground">
+        CPU <span className={`font-semibold ${loadColor(cpuLoad)}`}>{cpuLoad}%</span>
+      </span>
 
-        {cpu && cpu.cores.length > 0 && (
-          <div className="flex items-center gap-1.5" title="Per-core temperatures">
-            {cpu.cores.map((c, i) => (
-              <span key={i} className={`text-xs font-medium tabular-nums ${tempColor(c)}`} title={`Core ${i}`}>
-                {c}°
-              </span>
-            ))}
-          </div>
+      <span className="flex items-center gap-0.5" title="GPU busy % from rc6 residency">
+        <CircuitBoard className="size-2.5 text-muted-foreground" aria-hidden />
+        {gpuBusy == null ? (
+          <span className="font-semibold text-muted-foreground/70">GPU n/a</span>
+        ) : gpuBusy <= 0 ? (
+          <span className="font-semibold text-muted-foreground/70">GPU idle</span>
+        ) : (
+          <span className={`font-semibold tabular-nums ${loadColor(gpuBusy)}`}>GPU {gpuBusy}%</span>
         )}
+      </span>
 
-        <div className="flex items-center gap-2" title="GPU busy % from rc6 residency · clock frequency">
-          <CircuitBoard className="size-4 text-muted-foreground" aria-hidden />
-          {gpuBusy == null ? (
-            <span className="text-sm font-semibold text-muted-foreground/70">GPU n/a</span>
-          ) : gpuBusy <= 0 ? (
-            <span className="text-sm font-semibold text-muted-foreground/70">GPU idle</span>
-          ) : (
-            <span className={`text-sm font-semibold tabular-nums ${loadColor(gpuBusy)}`}>GPU {gpuBusy}%</span>
-          )}
-          {freqLabel && (
-            <span className="text-[10px] tabular-nums text-muted-foreground/70" title="Actual / max clock (not load)">
-              {freqLabel}
-            </span>
-          )}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-        <span className="tabular-nums">
-          CPU <span className={`font-semibold ${loadColor(cpuLoad)}`}>{cpuLoad}%</span>
+      {/* Pinned right: the sparkline resizes/redraws as history fills in,
+          so keeping it last stops it shoving the readings left of it. */}
+      <span className="flex items-center gap-0.5" title="CPU package temperature">
+        <Cpu className="size-2.5 text-muted-foreground" aria-hidden />
+        <span className={`font-semibold tabular-nums ${tempColor(pkg)}`}>
+          {pkg != null ? `${pkg}°C` : "–"}
         </span>
-      </div>
+        {history.length > 0 && <Sparkline data={history} color={tempHex(pkg)} />}
+      </span>
     </div>
   );
 }

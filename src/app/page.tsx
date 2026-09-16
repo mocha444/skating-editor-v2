@@ -4,21 +4,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Camera } from "lucide-react";
 
 import { UploadZone } from "@/components/upload-zone";
+import { VideosList } from "@/components/videos-list";
 import { SystemTemps } from "@/components/system-temps";
-import { RecentList } from "@/components/recent-list";
 import { ProgressPanel } from "@/components/progress-panel";
 import { LogPanel } from "@/components/log-panel";
 import { ResultCard } from "@/components/result-card";
 import { AdvancedSettings } from "@/components/advanced-settings";
 import { Button } from "@/components/ui/button";
 import { DiscardDialog } from "@/components/discard-dialog";
-import { appendSettings } from "@/lib/editor-types";
 import { uploadFormData } from "@/lib/upload-video";
 import { computeFileSig, computeFileHash } from "@/lib/client-hash";
 import {
   type Status,
   type Result,
-  type RecentItem,
   type DetectionSettings,
   DEFAULT_SETTINGS,
   fmtBytes,
@@ -33,8 +31,8 @@ export default function Page() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [progress, setProgress] = useState({ percent: 0, stage: "" });
   const [upload, setUpload] = useState<{ percent: number; loaded: number; total: number; speedBps: number } | null>(null);
-  const [recent, setRecent] = useState<RecentItem[]>([]);
   const [settings, setSettings] = useState<DetectionSettings>(DEFAULT_SETTINGS);
+  const [videosTick, setVideosTick] = useState(0);
   const esRef = useRef<EventSource | null>(null);
   const isBusy = status === "uploading" || status === "processing";
 
@@ -45,17 +43,6 @@ export default function Page() {
 
   useEffect(() => closeStream, [closeStream]);
 
-  const refreshRecent = useCallback(() => {
-    fetch("/api/recent")
-      .then((r) => r.json())
-      .then(setRecent)
-      .catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    refreshRecent();
-  }, [refreshRecent]);
-
   // ---- Discard-after-done lifecycle -------------------------------------
   // A finished job's dir stays on disk until the user leaves it behind. If the
   // final video was downloaded, the next action cleans it up silently; if not,
@@ -64,10 +51,9 @@ export default function Page() {
   const [pendingAction, setPendingAction] = useState<
     | { kind: "reset" }
     | { kind: "upload"; file: File }
-    | { kind: "reprocess"; dir: string }
     | null
   >(null);
-  const [discard, setDiscard] = useState<{ mode: "discard" | "replace"; name: string } | null>(null);
+  const [discard, setDiscard] = useState<{ name: string } | null>(null);
 
   const currentDir = status === "done" ? (result?.dir ?? null) : null;
 
@@ -82,19 +68,61 @@ export default function Page() {
   const videoLabel = useCallback(
     (dir: string | null | undefined) => {
       if (!dir) return "this video";
-      return recent.find((r) => r.dir === dir)?.originalName || dir;
+      return dir;
     },
-    [recent]
+    []
   );
 
+  const bumpVideos = useCallback(() => setVideosTick((t) => t + 1), []);
+
   const markDownloaded = useCallback((dir?: string) => {
+    bumpVideos();
     if (!dir) return;
     setDownloadedDirs((prev) => {
       const next = new Set(prev);
       next.add(dir);
       return next;
     });
-  }, []);
+  }, [bumpVideos]);
+
+  async function doReProcess(dir: string) {
+    if (isBusy || !dir) return;
+    setError("");
+    setLogs([`Re-processing ${dir}…`]);
+    // The new edit supersedes the old output, so a previous download of this
+    // dir no longer counts.
+    setDownloadedDirs((prev) => {
+      if (!prev.has(dir)) return prev;
+      const next = new Set(prev);
+      next.delete(dir);
+      return next;
+    });
+    try {
+      const fd = new FormData();
+      fd.append("dir", dir);
+      fd.append("threshold", settings.threshold);
+      fd.append("min-contour", settings.minContour);
+      fd.append("min-motion-frames", settings.minMotionFrames);
+      fd.append("buffer-frames", settings.bufferFrames);
+      fd.append("history", settings.history);
+      fd.append("var-threshold", settings.varThreshold);
+      fd.append("detect-shadows", settings.detectShadows);
+      const r = await fetch("/api/reprocess", { method: "POST", body: fd });
+      const j = await r.json();
+      if (!j.ok || !j.jobId) throw new Error(j.error || "Re-process failed");
+      openStream(j.jobId as string);
+    } catch (e: unknown) {
+      setStatus("error");
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  const handleVideosDeleted = useCallback((dir: string) => {
+    bumpVideos();
+    // The currently displayed result may have been deleted from disk — if
+    // so, drop its (now broken) result panel too.
+    if (dir === currentDir) resetState();
+  }, [bumpVideos, currentDir]);
 
   function appendLog(line: string) {
     setLogs((prev) => [...prev, line]);
@@ -126,10 +154,10 @@ export default function Page() {
     if (currentDir) {
       if (!downloadedDirs.has(currentDir)) {
         setPendingAction({ kind: "upload", file: f });
-        setDiscard({ mode: "discard", name: videoLabel(currentDir) });
+        setDiscard({ name: videoLabel(currentDir) });
         return;
       }
-      void deleteDir(currentDir).then(() => refreshRecent());
+      void deleteDir(currentDir);
     }
     selectFileNow(f);
   }
@@ -142,11 +170,10 @@ export default function Page() {
     }
     if (!downloadedDirs.has(currentDir)) {
       setPendingAction({ kind: "reset" });
-      setDiscard({ mode: "discard", name: videoLabel(currentDir) });
+      setDiscard({ name: videoLabel(currentDir) });
       return;
     }
     void deleteDir(currentDir).then(() => {
-      refreshRecent();
       resetState();
     });
   }
@@ -166,20 +193,13 @@ export default function Page() {
       // Delete the abandoned result first (user accepted the risk), then bring
       // in the newly selected file.
       if (currentDir) await deleteDir(currentDir);
-      refreshRecent();
       selectFileNow(action.file);
       return;
     }
     if (action.kind === "reset") {
       if (currentDir) await deleteDir(currentDir);
-      refreshRecent();
       resetState();
       return;
-    }
-    // Reprocess of the current dir: input stays, old output is purged once the
-    // replacement finishes.
-    if (action.kind === "reprocess") {
-      doReProcess(action.dir);
     }
   }
 
@@ -209,7 +229,7 @@ export default function Page() {
           setResult(d.result);
           setProgress({ percent: 100, stage: "done" });
           appendLog(`✓ Done! ${d.result?.segments} segments`);
-          refreshRecent();
+          bumpVideos();
         } else if (d.status === "error") {
           setStatus("error");
           setError(d.error || "Processing failed");
@@ -244,7 +264,7 @@ export default function Page() {
         const confirmed = await fetch(`/api/check-duplicate?hash=${encodeURIComponent(hash)}`).then((r) => r.json());
         if (confirmed.duplicate) {
           setStatus("error");
-          setError("This video was already processed. Delete it from Recent first, or upload a different file.");
+          setError("This video was already processed. Upload a different file.");
           appendLog(`✗ Duplicate detected — hash ${hash.slice(0, 8)}`);
           return;
         }
@@ -258,9 +278,8 @@ export default function Page() {
 
       // Server-side authoritative dedupe (hash computed during upload).
       if (json.duplicate) {
-        refreshRecent();
         setStatus("error");
-        setError("This video was already processed. Delete it from Recent first, or upload a different file.");
+        setError("This video was already processed. Upload a different file.");
         appendLog(`✗ Duplicate detected by server (${json.existingDir || ""})`);
         return;
       }
@@ -276,46 +295,6 @@ export default function Page() {
       setError(message);
       appendLog(`✗ Error: ${message}`);
     }
-  }
-
-  async function doReProcess(dir: string) {
-    setError("");
-    setLogs([`Re-processing ${dir}…`]);
-    try {
-      const fd = new FormData();
-      fd.append("dir", dir);
-      appendSettings(fd, settings);
-      const r = await fetch("/api/reprocess", { method: "POST", body: fd });
-      const j = await r.json();
-      if (!j.ok || !j.jobId) throw new Error(j.error || "Re-process failed");
-      openStream(j.jobId as string);
-    } catch (e: unknown) {
-      setStatus("error");
-      setError(e instanceof Error ? e.message : String(e));
-    }
-  }
-
-  // Re-process can target ANY recent row. Only re-running the CURRENT (on-screen)
-  // result discards a not-yet-downloaded edit, so gate just that case.
-  function onReProcess(dir: string) {
-    if (dir === currentDir && !downloadedDirs.has(dir)) {
-      setPendingAction({ kind: "reprocess", dir });
-      setDiscard({ mode: "replace", name: videoLabel(dir) });
-      return;
-    }
-    doReProcess(dir);
-  }
-
-  async function onDelete(dir: string) {
-    try {
-      const fd = new FormData();
-      fd.append("dir", dir);
-      await fetch("/api/delete", { method: "POST", body: fd });
-      refreshRecent();
-      // The currently displayed result may have been deleted from Recent — if
-      // so, drop its (now broken) result panel too.
-      if (dir === currentDir) resetState();
-    } catch {}
   }
 
   const onSettingsChange = useCallback((patch: Partial<DetectionSettings>) => {
@@ -372,14 +351,25 @@ export default function Page() {
       )}
 
       {status === "done" && result && (
-        <ResultCard result={result} onProcessAnother={requestProcessAnother} onDownloaded={markDownloaded} />
+        <ResultCard
+          result={result}
+          busy={isBusy}
+          onProcessAnother={requestProcessAnother}
+          onDownloaded={markDownloaded}
+          onReprocess={doReProcess}
+        />
       )}
 
-      <RecentList items={recent} busy={isBusy} onReProcess={onReProcess} onDelete={onDelete} />
+      <VideosList
+        busy={isBusy}
+        refreshKey={videosTick}
+        currentDir={currentDir}
+        onReprocess={doReProcess}
+        onDeleted={handleVideosDeleted}
+      />
 
       <DiscardDialog
         open={discard != null}
-        mode={discard?.mode ?? "discard"}
         name={discard?.name ?? "this video"}
         onCancel={cancelDiscard}
         onConfirm={() => void confirmDiscard()}

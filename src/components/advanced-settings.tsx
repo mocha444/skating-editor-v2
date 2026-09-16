@@ -237,54 +237,6 @@ export function AdvancedSettings({ settings, onChange }: Props) {
             />
             {/* Checkbox rows deliberately keep buttons OUTSIDE the <label> so
                 clicking “Reset” or the info icon never accidentally toggles it. */}
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-              <label
-                htmlFor="detect-shadows"
-                className="flex cursor-pointer items-center gap-1.5 font-medium text-muted-foreground"
-              >
-                <input
-                  id="detect-shadows"
-                  type="checkbox"
-                  checked={settings.detectShadows === "true"}
-                  onChange={(e) => onChange({ detectShadows: String(e.target.checked) })}
-                  className="size-4 accent-amber-400"
-                />
-                Detect shadows
-              </label>
-              <span className="flex items-center gap-1">
-                <Hint label="Detect shadows" hint={HINTS.detectShadows} />
-                <ResetButton
-                  label="Detect shadows"
-                  onReset={() => onChange({ detectShadows: DEFAULT_SETTINGS.detectShadows })}
-                />
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-              <label
-                htmlFor="keep-source"
-                className="flex cursor-pointer items-center gap-1.5 font-medium text-muted-foreground"
-                title="After processing, delete the large original file to save disk space. Reprocessing this video later will require re-uploading it."
-              >
-                <input
-                  id="keep-source"
-                  type="checkbox"
-                  checked={settings.keepSource !== "true"}
-                  onChange={(e) => onChange({ keepSource: String(!e.target.checked) })}
-                  className="size-4 accent-amber-400"
-                />
-                <span>Delete original after processing</span>
-              </label>
-              <span className="flex items-center gap-1">
-                <Hint
-                  label="Delete original after processing"
-                  hint="After processing, delete the large original file from the server to save disk space. Reprocessing this video later will require re-uploading it."
-                />
-                <ResetButton
-                  label="Delete original after processing"
-                  onReset={() => onChange({ keepSource: DEFAULT_SETTINGS.keepSource })}
-                />
-              </span>
-            </div>
           </div>
         </TooltipProvider>
       )}

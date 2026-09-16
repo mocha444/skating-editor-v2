@@ -66,22 +66,6 @@ function readCpuTicks() {
   return { idle, total };
 }
 
-/** CPU utilization % measured over a short sampling window. */
-async function readCpuLoad(): Promise<number> {
-  try {
-    const a = readCpuTicks();
-    await sleep(500);
-    const b = readCpuTicks();
-    const total = b.total - a.total;
-    const idle = b.idle - a.idle;
-    if (total <= 0) return 0;
-    const pct = ((total - idle) / total) * 100;
-    return Math.round(Math.max(0, Math.min(100, pct)));
-  } catch {
-    return 0;
-  }
-}
-
 function readGpuState() {
   const base = "/sys/class/drm/card0/gt/gt0";
   const freq = readInt(`${base}/rps_act_freq_mhz`);

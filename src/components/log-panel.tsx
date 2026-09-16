@@ -61,7 +61,7 @@ export function LogPanel({ logs, autoScroll, onToggleAutoScroll, onAppendLog }: 
       <div className="flex items-center justify-between gap-3">
         <h3 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
           {logs.length > 0 && (
-            <span className="size-1.5 animate-pulse rounded-full bg-amber-400" aria-hidden />
+            <span className="size-1.5 animate-pulse rounded-full bg-primary" aria-hidden />
           )}
           Build log{logs.length === 1 ? "" : "s"} {logs.length > 0 ? `(${logs.length} lines)` : ""}
         </h3>
@@ -75,7 +75,7 @@ export function LogPanel({ logs, autoScroll, onToggleAutoScroll, onAppendLog }: 
               type="checkbox"
               checked={autoScroll}
               onChange={(e) => onToggleAutoScroll(e.target.checked)}
-              className="size-4 rounded accent-amber-400"
+              className="size-4 rounded accent-primary"
             />
             Auto-scroll
           </label>
@@ -83,12 +83,12 @@ export function LogPanel({ logs, autoScroll, onToggleAutoScroll, onAppendLog }: 
       </div>
       <div
         ref={logRef}
-        className="h-48 overflow-y-auto whitespace-pre-wrap rounded-xl border border-border bg-black/50 p-4 font-mono text-xs leading-relaxed text-muted-foreground shadow-inner"
+        className="h-64 max-h-[50vh] overflow-y-auto whitespace-pre-wrap rounded-xl border border-border bg-black/50 p-3 font-mono text-xs leading-relaxed text-muted-foreground shadow-inner"
       >
         {logs.length > 0 ? (
           logs.map((line, i) => (
             <div key={i} className="border-b border-foreground/5 py-0.5 last:border-0">
-              <span className="select-none text-amber-400">[log]</span> {line}
+              <span className="select-none text-primary">[log]</span> {line}
             </div>
           ))
         ) : (

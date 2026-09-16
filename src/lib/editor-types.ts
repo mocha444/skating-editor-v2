@@ -9,16 +9,14 @@ export type Result = {
   finalUrl: string;
   rawSegments: [number, number][] | [number, number, number][];
   segDurations?: number[];
+  /**
+   * The range each clip ACTUALLY covers in the source after stream-copy keyframe
+   * snapping. `rawSegments` is the detected motion window, which is shorter —
+   * showing that instead made the `@` offsets look wrong.
+   */
+  actualSegments?: [number, number][];
   segUrls?: string[];
   logs?: string[];
-};
-
-export type RecentItem = {
-  durationLabel: string;
-  dir: string;
-  url: string;
-  date: string;
-  originalName?: string;
 };
 
 export type DetectionSettings = {
@@ -29,7 +27,6 @@ export type DetectionSettings = {
   history: string;
   varThreshold: string;
   detectShadows: string;
-  keepSource: string;
 };
 
 export const DEFAULT_SETTINGS: DetectionSettings = {
@@ -40,18 +37,7 @@ export const DEFAULT_SETTINGS: DetectionSettings = {
   history: "300",
   varThreshold: "25",
   detectShadows: "false",
-  keepSource: "true",
 };
-
-export function appendSettings(fd: FormData, s: DetectionSettings) {
-  fd.append("threshold", s.threshold);
-  fd.append("min-contour", s.minContour);
-  fd.append("min-motion-frames", s.minMotionFrames);
-  fd.append("buffer-frames", s.bufferFrames);
-  fd.append("history", s.history);
-  fd.append("var-threshold", s.varThreshold);
-  fd.append("detect-shadows", s.detectShadows);
-}
 
 export function fmtBytes(n: number): string {
   if (!Number.isFinite(n) || n < 0) return "—";

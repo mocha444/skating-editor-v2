@@ -1,8 +1,7 @@
 // Typed surface over the shared SQLite store (scripts/jobs-db.cjs).
 // Used only by server routes; wraps the CommonJS module with TypeScript types.
 
-/* eslint-disable @typescript-eslint/no-require-imports */
-// eslint-disable-next-line
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const store = require("../../scripts/jobs-db.cjs") as JobDb;
 
 export type JobStatus = "pending" | "queued" | "running" | "done" | "error";
@@ -27,7 +26,6 @@ export type Job = {
   history: string | null;
   varThreshold: string | null;
   detectShadows: string | null;
-  keepSource: string | null;
   originalName: string | null;
   result: unknown;
   attempts: number;
@@ -36,13 +34,6 @@ export type Job = {
   createdAt: number;
 };
 
-export type RecentEntry = {
-  dir: string;
-  hash: string;
-  originalName: string;
-  duration: number;
-  uploadedAt: number;
-};
 
 export type JobPatch = Partial<
   Pick<
@@ -61,7 +52,6 @@ export type JobPatch = Partial<
     | "history"
     | "varThreshold"
     | "detectShadows"
-    | "keepSource"
   >
 >;
 
@@ -79,13 +69,11 @@ export interface JobDb {
   resetRunningJobs(): void;
   listJobs(): Job[];
   listJobsByDir(dir: string): Job[];
+  /** The one job in flight (pending/queued/running), used as an admission guard. */
+  getActiveJob(): Job | null;
   deleteJob(id: string): void;
   countQueued(): number;
   jobLogPath(id: string): string;
-  listRecent(): RecentEntry[];
-  addRecent(entry: RecentEntry): void;
-  updateRecentDuration(dir: string, duration: number): void;
-  removeRecent(dir: string): void;
 }
 
 export const db = store as JobDb;

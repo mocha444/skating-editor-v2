@@ -1,7 +1,7 @@
 // @ts-check
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { appendSettings } = require("../src/lib/editor-types.ts");
+const { DEFAULT_SETTINGS } = require("../src/lib/editor-types.ts");
 
 // Tests Python process_video.py via assertions about behavior
 

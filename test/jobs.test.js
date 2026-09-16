@@ -1,7 +1,5 @@
 // @ts-check
-// Integration tests for the SQLite-backed job queue + recent store.
-// These are the pieces that replaced the file-based progress/recent.json store:
-// atomic dequeue, crash-recovery, retry/backoff, and race-free recent writes.
+// Integration tests for the SQLite-backed job queue.
 const { test, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
@@ -13,10 +11,8 @@ process.env.DATA_DIR = TMP;
 
 const store = require("../scripts/jobs-db.cjs");
 
-// Isolate every test: start from an empty queue + recent list.
 beforeEach(() => {
   store.getDb().exec("DELETE FROM jobs");
-  store.getDb().exec("DELETE FROM recent");
 });
 
 function makeJob(id, over = {}) {
@@ -94,24 +90,36 @@ test("crash recovery: resetRunningJobs requeues stale 'running' jobs", () => {
   assert.equal(store.getJob("e1").status, "queued");
 });
 
-test("recent: add/update/remove and no duplicate dirs", () => {
-  store.addRecent({ dir: "skate-x", hash: "aa", originalName: "a.mp4", duration: 0, uploadedAt: 1000 });
-  store.addRecent({ dir: "skate-x", hash: "aa", originalName: "a.mp4", duration: 0, uploadedAt: 1000 });
-  assert.equal(store.listRecent().length, 1, "re-add same dir must not duplicate");
-  store.updateRecentDuration("skate-x", 42.5);
-  assert.equal(store.listRecent().find((e) => e.dir === "skate-x").duration, 42.5);
-  store.removeRecent("skate-x");
-  assert.equal(store.listRecent().length, 0);
-});
-
-test("recent ordering is newest-first", () => {
-  store.addRecent({ dir: "skate-1", hash: "1", originalName: "1.mp4", duration: 0, uploadedAt: 100 });
-  store.addRecent({ dir: "skate-2", hash: "2", originalName: "2.mp4", duration: 0, uploadedAt: 200 });
-  const ids = store.listRecent().map((e) => e.dir);
-  assert.deepEqual(ids, ["skate-2", "skate-1"]);
-});
-
 // Clean up the temp DB after all tests.
 test.after(() => {
   fs.rmSync(TMP, { recursive: true, force: true });
+});
+// --- admission guard: one upload/process at a time -------------------------
+// The pipeline is automatic (picking a file starts it), so the server must
+// refuse a second job while one is in flight rather than queueing it.
+
+test("getActiveJob returns null when nothing is in flight", () => {
+  assert.equal(store.getActiveJob(), null);
+});
+
+test("getActiveJob reports pending, queued and running jobs", () => {
+  for (const status of ["pending", "queued", "running"]) {
+    store.getDb().exec("DELETE FROM jobs");
+    store.createJob(makeJob(`act-${status}`, { status }));
+    const active = store.getActiveJob();
+    assert.ok(active, `${status} must count as active`);
+    assert.equal(active.id, `act-${status}`);
+  }
+});
+
+test("getActiveJob ignores finished and failed jobs", () => {
+  store.createJob(makeJob("done1", { status: "done" }));
+  store.createJob(makeJob("err1", { status: "error" }));
+  assert.equal(store.getActiveJob(), null, "finished work must not block a new upload");
+});
+
+test("getActiveJob returns the oldest in-flight job when several somehow exist", () => {
+  store.createJob(makeJob("first", { status: "queued", createdAt: 1000 }));
+  store.createJob(makeJob("second", { status: "queued", createdAt: 2000 }));
+  assert.equal(store.getActiveJob().id, "first");
 });

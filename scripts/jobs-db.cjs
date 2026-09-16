@@ -1,5 +1,5 @@
 /**
- * Shared SQLite-backed job + recent store.
+ * Shared SQLite-backed job store.
  *
  * Plain CommonJS so it can be `require`d by BOTH:
  *   - scripts/worker.js (plain node)
@@ -7,7 +7,7 @@
  *
  * Uses Node 24's built-in `node:sqlite` — no native compile, no external dep.
  * A single WAL-mode DB (app.db) on the shared volume gives the app and worker
- * atomic dequeue, transactional writes, and kills the recent.json write race.
+ * atomic dequeue, transactional writes.
  */
 "use strict";
 
@@ -69,7 +69,6 @@ function getDb() {
       history          TEXT,
       var_threshold    TEXT,
       detect_shadows   TEXT,
-      keep_source      TEXT,
       original_name    TEXT,
       result           TEXT,
       attempts         INTEGER NOT NULL DEFAULT 0,
@@ -78,18 +77,7 @@ function getDb() {
       created_at       INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at);
-    CREATE TABLE IF NOT EXISTS recent (
-      dir           TEXT PRIMARY KEY,
-      hash          TEXT,
-      original_name TEXT,
-      duration      REAL NOT NULL DEFAULT 0,
-      uploaded_at   INTEGER NOT NULL
-    );
   `);
-  // Migration: add keep_source for pre-existing DBs.
-  try {
-    db.exec("ALTER TABLE jobs ADD COLUMN keep_source TEXT");
-  } catch {}
   return db;
 }
 
@@ -120,7 +108,6 @@ function rowToJob(r) {
     history: r.history,
     varThreshold: r.var_threshold,
     detectShadows: r.detect_shadows,
-    keepSource: r.keep_source,
     originalName: r.original_name,
     result,
     attempts: r.attempts,
@@ -136,15 +123,15 @@ function createJob(j) {
   d.prepare(`
     INSERT INTO jobs (id, dir, in_path, seg_dir, status, stage, percent, started,
       threshold, min_contour, min_motion_frames, buffer_frames, history, var_threshold,
-      detect_shadows, keep_source, original_name, attempts, max_attempts, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      detect_shadows, original_name, attempts, max_attempts, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     j.id, j.dir, j.inPath, j.segDir,
     j.status || "pending", j.stage || "queued", j.percent || 5,
     j.started ?? null,
     j.threshold ?? null, j.minContour ?? null, j.minMotionFrames ?? null,
     j.bufferFrames ?? null, j.history ?? null, j.varThreshold ?? null, j.detectShadows ?? null,
-    j.keepSource ?? "true", j.originalName ?? null,
+    j.originalName ?? null,
     0, j.maxAttempts || 3, created,
   );
   return getJob(j.id);
@@ -252,6 +239,24 @@ function deleteJob(id) {
   getDb().prepare("DELETE FROM jobs WHERE id = ?").run(id);
 }
 
+/**
+ * The job currently in flight, if any (pending/queued/running).
+ *
+ * Admission guard so the app only ever works on one thing at a time: a second
+ * upload/process is refused rather than queued behind the first. With the
+ * automatic pipeline that is what stops a user stacking jobs and monopolising
+ * the single worker.
+ */
+function getActiveJob() {
+  return rowToJob(
+    getDb()
+      .prepare(
+        "SELECT * FROM jobs WHERE status IN ('pending','queued','running') ORDER BY created_at ASC LIMIT 1"
+      )
+      .get()
+  );
+}
+
 function countQueued() {
   const r = getDb().prepare(`
     SELECT COUNT(*) c FROM jobs
@@ -263,28 +268,6 @@ function countQueued() {
 
 function jobLogPath(id) {
   return path.join(PROGRESS_DIR, id + ".log");
-}
-
-// --- recent (SQLite kills the recent.json read-modify-write race) ---
-function listRecent() {
-  return getDb().prepare("SELECT * FROM recent ORDER BY uploaded_at DESC LIMIT 30").all().map((r) => ({
-    dir: r.dir, hash: r.hash, originalName: r.original_name, duration: r.duration, uploadedAt: r.uploaded_at,
-  }));
-}
-function addRecent(e) {
-  getDb().prepare(`
-    INSERT INTO recent (dir, hash, original_name, duration, uploaded_at)
-    VALUES (?,?,?,?,?)
-    ON CONFLICT(dir) DO UPDATE SET
-      hash=excluded.hash, original_name=excluded.original_name,
-      duration=excluded.duration, uploaded_at=excluded.uploaded_at
-  `).run(e.dir, e.hash, e.originalName, e.duration || 0, e.uploadedAt);
-}
-function updateRecentDuration(dir, duration) {
-  getDb().prepare("UPDATE recent SET duration = ? WHERE dir = ?").run(duration, dir);
-}
-function removeRecent(dir) {
-  getDb().prepare("DELETE FROM recent WHERE dir = ?").run(dir);
 }
 
 module.exports = {
@@ -301,11 +284,8 @@ module.exports = {
   resetRunningJobs,
   listJobs,
   listJobsByDir,
+  getActiveJob,
   deleteJob,
   countQueued,
   jobLogPath,
-  listRecent,
-  addRecent,
-  updateRecentDuration,
-  removeRecent,
 };

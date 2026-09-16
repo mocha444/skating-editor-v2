@@ -31,7 +31,7 @@ export function UploadZone({ file, busy, hashing, onFileSelected, onClear }: Pro
       aria-label="Video upload dropzone"
       className={`relative flex w-full flex-col items-center rounded-3xl border-2 border-dashed p-8 text-center transition-colors outline-none sm:p-12 ${
         isDragActive
-          ? "border-amber-400 bg-amber-400/10"
+          ? "border-primary bg-primary/10"
           : "border-border bg-card hover:border-input hover:bg-muted/40"
       } ${busy || hashing ? "pointer-events-none opacity-60" : "cursor-pointer"}`}
     >
@@ -40,7 +40,7 @@ export function UploadZone({ file, busy, hashing, onFileSelected, onClear }: Pro
       {file ? (
         <div className="flex flex-col items-center gap-2">
           <div className="flex items-center gap-3">
-            <FileVideo className="size-8 shrink-0 text-amber-400" aria-hidden />
+            <FileVideo className="size-8 shrink-0 text-primary" aria-hidden />
             <p className="max-w-xs truncate text-lg font-semibold">{file.name}</p>
             <button
               type="button"
@@ -57,13 +57,13 @@ export function UploadZone({ file, busy, hashing, onFileSelected, onClear }: Pro
           <p className="font-mono text-xs text-muted-foreground">
             {ext} · {fmtBytes(file.size)}
             {hashing && (
-              <span className="ml-1.5 text-amber-400">· checking for duplicates…</span>
+              <span className="ml-1.5 text-primary">· checking for duplicates…</span>
             )}
           </p>
         </div>
       ) : (
         <div className="flex flex-col items-center gap-3">
-          <CloudUpload className="size-10 text-amber-400" aria-hidden />
+          <CloudUpload className="size-10 text-primary" aria-hidden />
           <p className="text-xl font-semibold">
             {isDragActive ? "Drop it!" : "Drag & drop your video"}
           </p>

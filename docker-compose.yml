@@ -1,9 +1,23 @@
+# LOCAL-ONLY instance — `master` branch.
+#
+# Deliberately different from the public deployment:
+#   * NO auth (no Clerk keys => open mode), NO Cloudflare in the path
+#   * bound to the LAN IP only, so it is reachable at http://192.168.1.241:3002
+#   * its OWN volume, so this older branch can never read or corrupt the
+#     production database (the public instance has a later schema with user_id,
+#     per-user scoping and a retention sweep — none of which exist here)
+#
+# The explicit LAN IP is required: 127.0.0.1:3002 is already published by the
+# public instance, and 0.0.0.0:3002 would collide with it. If the host's LAN IP
+# ever changes, this binding must change with it.
+name: skating-local
+
 services:
   app:
     build:
       context: .
     ports:
-    - 0.0.0.0:3002:3000
+      - 192.168.1.241:3002:3000
     environment:
     - NODE_ENV=production
     - DATA_DIR=/app/data
@@ -14,6 +28,7 @@ services:
     - /sys/class/hwmon:/sys/class/hwmon:ro
     - /sys/class/drm:/sys/class/drm:ro
     restart: unless-stopped
+
   worker:
     build: .
     command:
@@ -24,7 +39,6 @@ services:
     - DATA_DIR=/app/data
     volumes:
     - media_data:/app/data
-    - .:/app
     ipc: host
     devices:
     - /dev/dri/card0:/dev/dri/card0
@@ -34,5 +48,6 @@ services:
     restart: unless-stopped
     deploy:
       replicas: 1
+
 volumes:
   media_data: null

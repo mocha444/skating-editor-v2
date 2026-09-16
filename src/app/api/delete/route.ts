@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 /**
  * Delete an upload dir and EVERYTHING that belongs to it: all job rows for the
  * dir (a dir accumulates one row per upload/reprocess), each job's log file and
- * final result video, the upload tree, and the recent-list entry.
+ * final result video, and the upload tree.
  *
  * Note the result filename is keyed by job id (skating_final_<jobId>.mp4), and
  * reprocesses mint NEW job ids while keeping the original dir — so we must walk
@@ -34,7 +34,6 @@ export async function POST(req: Request) {
         db.deleteJob(j.id);
       }),
     ]);
-    db.removeRecent(dir);
     return NextResponse.json({ ok: true, deletedJobs: jobs.length });
   } catch {
     return NextResponse.json({ error: "delete failed" }, { status: 500 });
